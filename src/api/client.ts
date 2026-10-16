@@ -173,27 +173,6 @@ export interface ApiConversation {
   } | null
 }
 
-export interface ApiQuotaWindow {
-  usedUsd: number
-  limitUsd: number | null
-  windowStart: string | null
-}
-
-export interface ApiQuotaSnapshot {
-  groupId: number
-  groupName: string | null
-  status: string
-  expiresAt: string | null
-  daily: ApiQuotaWindow
-  weekly: ApiQuotaWindow
-  monthly: ApiQuotaWindow
-}
-
-export interface ApiQuotaResponse {
-  configured: boolean
-  snapshot: ApiQuotaSnapshot | null
-  error?: string
-}
 
 export interface ApiProject {
   id: string
@@ -890,13 +869,6 @@ export const api = {
     http<{ ok: boolean }>('/me/account', { method: 'DELETE' }),
   authMe: () =>
     http<MeResponse>('/auth/me'),
-  /** sub2api-backed quota snapshot for the signed-in user. `configured`
-   *  is false on deployments that don't run a sub2api gateway; `snapshot`
-   *  is null when the user has no active subscription (e.g. provisioning
-   *  hasn't completed yet). Both states render as "unavailable" in the
-   *  Usage tab rather than as errors. */
-  getQuota: () =>
-    http<ApiQuotaResponse>('/me/quota'),
   listCompanies: () =>
     http<Array<{ id: string; name: string; slug: string; logoUrl: string | null; createdAt: string; role: string }>>('/companies'),
   listProjects: () => http<ApiProject[]>('/projects'),

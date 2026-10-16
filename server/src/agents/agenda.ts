@@ -485,12 +485,17 @@ Reply as strict JSON.`
       instructions,
       input,
       text: { format: { type: 'json_object' } },
-      // DeepSeek V4 Flash regularly spends the first ~300 tokens on hidden
-      // reasoning. A 300-token cap then truncates the JSON to one character,
-      // which made every minute-level BYOA agenda check fail closed. Leave
-      // enough room for reasoning plus the small structured verdict.
-      max_output_tokens: 2000,
-      reasoning: { effort: 'minimal' },
+      // Reasoning models spend the first hundreds of tokens on hidden
+      // reasoning, and a tight cap truncates the JSON to one character, which
+      // made every minute-level agenda check fail closed. Leave room for
+      // reasoning plus the small structured verdict.
+      //
+      // The effort must be one the support model accepts: `minimal` is rejected
+      // by the default gpt-5.4-mini ("Supported values are: none, low, medium,
+      // high"), so every tick failed with a 400 and the check never ran. `low`
+      // matches the inbox triage classifier — the same cheap-verdict job.
+      max_output_tokens: 4000,
+      reasoning: { effort: 'low' },
     })
     const parsed = parseAgendaVerdict(r.output_text ?? '')
     if (!parsed) throw new Error('agenda classifier returned no recoverable verdict')
