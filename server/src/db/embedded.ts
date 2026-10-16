@@ -36,6 +36,17 @@ import type { PoolClient, QueryResult, QueryResultRow } from 'pg'
 /** Minimal structural type for anything the server passes as `values`. */
 type ParamList = unknown[] | undefined
 
+/** `pg` accepts both `query(text, values)` and `query({ name, text, values })`.
+ *  The named form is a prepared-statement hint; PGlite has no such cache, so
+ *  the name is accepted and ignored. */
+export type QueryInput = string | { name?: string; text: string; values?: unknown[] }
+
+function normalizeQuery(input: QueryInput, values?: unknown[]): { text: string; values: ParamList } {
+  if (typeof input === 'string') return { text: input, values }
+  const text = typeof input?.text === 'string' ? input.text : ''
+  return { text, values: input?.values ?? values }
+}
+
 interface RawResult {
   rows: Record<string, unknown>[]
   fields: { name: string; dataTypeID: number }[]
@@ -253,8 +264,9 @@ export class EmbeddedClient {
 
   constructor(private readonly hooks: { onTxnEnd: () => void }) {}
 
-  async query<R extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]): Promise<QueryResult<R>> {
+  async query<R extends QueryResultRow = QueryResultRow>(input: QueryInput, values?: unknown[]): Promise<QueryResult<R>> {
     if (this.released) throw new Error('[embedded-pg] query after release()')
+    const { text: sql, values: params } = normalizeQuery(input, values)
     const control = CONTROL_RE.exec(sql)?.[1]?.toUpperCase()
     if (control === 'BEGIN' || control === 'START TRANSACTION') {
       if (!this.inTxn) {
@@ -263,7 +275,7 @@ export class EmbeddedClient {
         try {
           // Actually enter the transaction on the single backend — the gate
           // guarantees no other statement interleaves until COMMIT/ROLLBACK.
-          await runSql(sql, values, this.owner)
+          await runSql(sql, params, this.owner)
         } catch (e) {
           this.inTxn = false
           gate.release(this.owner)
@@ -277,7 +289,7 @@ export class EmbeddedClient {
     const runsInTxn = this.inTxn
     if (!runsInTxn) await gate.acquire(this.owner, sql.slice(0, 60))
     try {
-      const result = await runSql(sql, values, this.owner)
+      const result = await runSql(sql, params, this.owner)
       if ((control === 'COMMIT' || control === 'END' || control === 'ROLLBACK') && this.inTxn) {
         this.inTxn = false
         gate.release(this.owner)
@@ -315,18 +327,19 @@ function emptyResult(command: string): QueryResult<QueryResultRow> {
 export class EmbeddedPool {
   private closed = false
 
-  async query<R extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]): Promise<QueryResult<R>> {
+  async query<R extends QueryResultRow = QueryResultRow>(input: QueryInput, values?: unknown[]): Promise<QueryResult<R>> {
     if (this.closed) throw new Error('[embedded-pg] pool is closed')
+    const { text: sql, values: params } = normalizeQuery(input, values)
     // Implicit pool.query never opens transactions; run + release.
     const owner = Symbol('pool-query')
     if (CONTROL_RE.test(sql)) {
       // Stray control statement through pool.query — treat as its own txn.
       await gate.acquire(owner, sql.slice(0, 60))
-      try { return (await runSql(sql, values, owner)) as unknown as QueryResult<R> }
+      try { return (await runSql(sql, params, owner)) as unknown as QueryResult<R> }
       finally { gate.release(owner) }
     }
     await gate.acquire(owner, sql.slice(0, 60))
-    try { return (await runSql(sql, values, owner)) as unknown as QueryResult<R> }
+    try { return (await runSql(sql, params, owner)) as unknown as QueryResult<R> }
     finally { gate.release(owner) }
   }
 
@@ -337,7 +350,7 @@ export class EmbeddedPool {
     // server only uses query() + release(). Proxy just those, plus
     // no-op event methods for safety.
     const facade = {
-      query: (sql: string, values?: unknown[]) => client.query(sql, values),
+      query: (input: QueryInput, values?: unknown[]) => client.query(input, values),
       release: (mode?: unknown) => client.release(mode),
       on: (_: string, __: (...args: never[]) => void) => facade,
       once: (_: string, __: (...args: never[]) => void) => facade,

@@ -116,3 +116,17 @@ test('multi-statement SQL runs and returns the last result (migration DDL)', asy
 test('unsupported extension errors surface (pgvector absent)', async () => {
   await assert.rejects(pool.query('CREATE EXTENSION IF NOT EXISTS vector'))
 })
+
+test('named-query config form is accepted (pg QueryConfig)', async () => {
+  // The BYOA inbox hot path uses `pool.query({ name, text, values })`.
+  const { rows } = await pool.query<{ one: number }>({
+    name: 'embedded_test_named',
+    text: 'SELECT $1::int AS one',
+    values: [1],
+  })
+  assert.equal(rows[0].one, 1)
+  const viaClient = await pool.connect()
+  const clientRows = await viaClient.query<{ two: number }>({ text: 'SELECT 2::int AS two' })
+  viaClient.release()
+  assert.equal(clientRows.rows[0].two, 2)
+})
