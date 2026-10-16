@@ -48,6 +48,24 @@ export const env = {
   // everything else (chat, boards, docs, calendar) works.
   OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
   /**
+   * Any OTHER OpenAI-compatible endpoint, for people who would rather run on
+   * DeepSeek, Moonshot, Together, or a local llama.cpp/Ollama server. When set,
+   * every server-side LLM call goes here instead of api.openai.com, and model
+   * names are sent through untouched — so `OPENAI_MODEL` and
+   * `OPENAI_MODEL_SUPPORT` also need to name models that endpoint serves
+   * (e.g. `deepseek-chat`). The app's 模型服务 panel writes these for the
+   * presets it knows.
+   *
+   * These endpoints speak Chat Completions, not the Responses API our call
+   * sites use, so requests are translated by the same bridge as the Novita
+   * route (server/src/compatible.ts) — Chat Completions endpoints with
+   * tool-calling support are what work here, not just any OpenAI-shaped URL.
+   */
+  LLM_BASE_URL: (process.env.CUMORA_LLM_BASE_URL ?? '').replace(/\/+$/, ''),
+  /** Key/path for {@link LLM_BASE_URL}. Falls back to OPENAI_API_KEY so a
+   *  provider swap doesn't require retyping the key in two fields. */
+  LLM_API_KEY: process.env.CUMORA_LLM_API_KEY ?? '',
+  /**
    * "Brain" model — the agent's main reasoning loop and convene speech.
    * Default model used when an agent's `participants.model` is NULL.
    * Per-agent overrides live on the agent row in DB and are edited from

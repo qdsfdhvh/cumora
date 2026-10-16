@@ -31,6 +31,7 @@ import OpenAI from 'openai'
 import { env } from './env.js'
 import { isNovitaModel, novitaResponsesShim } from './novita.js'
 import { isOrcaRouterModel, orcarouterResponsesCreate } from './orcarouter.js'
+import { compatibleResponsesShim, llmEndpointLabel } from './compatible.js'
 
 interface CachedClient {
   client: OpenAI
@@ -64,6 +65,9 @@ const SDK_TIMEOUT_MS = 5 * 60_000
  *  `responses.create` returns crafted Responses-API event streams instead
  *  of round-tripping through sub2api / OpenAI. */
 let testLlmOverride: ((tenant: string | null) => OpenAI | Promise<OpenAI>) | null = null
+/** Which endpoint the server-side LLM calls will use, for logs and the probe. */
+export { llmEndpointLabel }
+
 export function __setLlmClientOverrideForTesting(fn: typeof testLlmOverride): void {
   testLlmOverride = fn
 }
@@ -158,10 +162,27 @@ export function invalidateLlmClient(tenant: string): void {
 
 let _legacy: OpenAI | null = null
 function legacyClient(): OpenAI {
-  if (!_legacy) _legacy = new OpenAI({
-    apiKey: env.OPENAI_API_KEY,
+  if (_legacy) return _legacy
+  const custom = env.LLM_BASE_URL
+  const real = new OpenAI({
+    apiKey: env.LLM_API_KEY || env.OPENAI_API_KEY,
+    ...(custom ? { baseURL: custom } : {}),
     maxRetries: SDK_MAX_RETRIES,
     timeout: SDK_TIMEOUT_MS,
   })
+  if (!custom) {
+    _legacy = real
+    return _legacy
+  }
+  // A custom OpenAI-compatible endpoint speaks Chat Completions, so only the
+  // Responses surface is translated; every other surface (images, chat,
+  // embeddings) is left pointing at the same endpoint, where it either works
+  // or reports the provider's own error.
+  _legacy = new Proxy(real, {
+    get(target, prop, receiver): unknown {
+      if (prop === 'responses') return compatibleResponsesShim
+      return Reflect.get(target, prop, receiver)
+    },
+  }) as OpenAI
   return _legacy
 }

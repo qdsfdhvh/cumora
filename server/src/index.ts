@@ -236,6 +236,13 @@ async function main() {
   const bindHost = env.BIND_HOST || (embeddedEnabled() ? '127.0.0.1' : '')
   server.listen(env.PORT, bindHost || undefined, () => {
     console.log(`[boot] cumora server ${bindHost || '*'} :${env.PORT} · instance ${env.INSTANCE_ID} · model ${env.OPENAI_MODEL}`)
+    // Which model service the server-side LLM calls will actually reach —
+    // "why is it not answering" is much easier to answer with this in the log.
+    console.log(
+      env.LLM_BASE_URL
+        ? `[llm] endpoint ${env.LLM_BASE_URL} (OpenAI-compatible) · models ${env.OPENAI_MODEL} / ${env.OPENAI_MODEL_SUPPORT}`
+        : `[llm] endpoint api.openai.com · models ${env.OPENAI_MODEL} / ${env.OPENAI_MODEL_SUPPORT}`,
+    )
   })
 
   // Seed and backfill after listen. They used to run first, so a rollout
