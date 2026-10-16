@@ -1002,6 +1002,30 @@ input:focus, textarea:focus, button:focus { outline: none; }
   100% { opacity: 0; transform: translate(var(--spark-x), var(--spark-y)) scale(0.85); }
 }
 
+/* Ambient decoration is quiet unless someone is looking at the window
+ * (data-attentive), or the owner asked for less motion in Preferences
+ * (data-reduce-motion) — the same list the OS preference below disables.
+ * Without this the empty-state mascot keeps the compositor at 60 fps forever,
+ * even while the app sits behind another window. */
+html:is([data-attentive='0'], [data-reduce-motion='1']) :is(.cumora-cloud-float, .cumora-cloud-poke, .cumora-cloud-poke img) {
+  animation: none !important;
+  transition: none !important;
+  will-change: auto !important;
+}
+
+html:is([data-attentive='0'], [data-reduce-motion='1']) :is(.reaction-control, .reaction-quick-tray) {
+  transition: none !important;
+  transform: none !important;
+}
+
+html:is([data-attentive='0'], [data-reduce-motion='1']) :is(.reaction-pill, .reaction-count, .reaction-burst, .reaction-burst span) {
+  animation: none !important;
+}
+
+html:is([data-attentive='0'], [data-reduce-motion='1']) .reaction-burst::before {
+  animation: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cumora-cloud-float,
   .cumora-cloud-poke,

@@ -100,6 +100,22 @@ reconnects whenever the app's server is up.
   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.cumora.daemon.plist
   ```
 
+### If the agents cannot use `gh` (or the wrong `git`)
+
+Symptom: an agent reading a pull request reports
+`[Lody GitHub] {"stage":"execute","code":"context_missing"}` while `gh` works
+fine in your terminal. Cause: `--install-service` copied the PATH of whatever
+shell ran it into the LaunchAgent, so the agents inherit per-session shims (a
+`gh`/`git` wrapper that expects that session's context) ahead of your real
+binaries.
+
+```bash
+node --import tsx scripts/fix-daemon-path.ts --reload   # drops session dirs, restarts the daemon
+```
+
+Re-running `--install-service` from such a shell poisons the PATH again — run
+the fix afterwards, or install the service from a plain terminal.
+
 Check what the daemon can actually reach before blaming the app:
 
 ```bash

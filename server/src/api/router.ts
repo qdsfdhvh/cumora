@@ -963,14 +963,6 @@ api.get('/auth/me', safe(async (req, res) => {
 // (The cloud build mounted an operator admin console here — removed in
 // the personal build.)
 
-/* ============== /me/quota — usage snapshot ===========
- * The cloud build proxied a per-user sub2api gateway quota here. The
- * personal build has no gateway and no quotas — always unconfigured.
- * — the client shows an "unavailable" affordance rather than erroring. */
-api.get('/me/quota', safe(async (_req, res) => {
-  res.json({ configured: false, snapshot: null })
-}))
-
 /* ============== /me legacy stub — now session-derived ============== */
 api.get('/me', safe(async (req, res) => {
   const userId = requireAuth(req)
