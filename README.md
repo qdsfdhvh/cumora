@@ -4,6 +4,8 @@
 
 ## Personal local build (this fork)
 
+> Operations guide (build/sign, first run, daemon pairing, data layout, embedded-DB constraints): [`docs/LOCAL_BUILD.md`](docs/LOCAL_BUILD.md).
+
 This branch is a **single-machine, offline-first build**. Cumora Cloud is gone:
 no managed Kubernetes agent pods, no cloud sign-in, no sub2api gateway, no
 PostHog telemetry, no auto-update. Everything the product needs runs inside
