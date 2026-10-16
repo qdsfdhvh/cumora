@@ -124,6 +124,9 @@ export interface LocalLlmConfig {
   model: string
   modelSupport: string
   apiKey?: string
+  imageBaseUrl?: string
+  imageModel?: string
+  imageApiKey?: string
 }
 
 /** `setLlmConfig` reports validation failures as data (with the status). */
@@ -166,6 +169,11 @@ export interface LocalServerStatus {
     modelSupport: string
     /** True when a key is available — the custom one, else the OpenAI one. */
     hasKey: boolean
+    /** Images: their own endpoint, so text can be DeepSeek while images stay
+     *  on something that can draw. Empty ⇒ OpenAI when text is OpenAI. */
+    imageBaseUrl: string
+    imageApiKeyStored: boolean
+    imageModel: string
   }
   /** On-disk directory holding the database, uploads, and server.env. */
   dataDir: string

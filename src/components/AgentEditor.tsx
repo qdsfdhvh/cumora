@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, getPairingServerOrigin, type AgentInput } from '@/api/client'
 import { isNativePlatform } from '@/lib/native'
+import { useLlmHealth } from '@/lib/llmHealth'
 import { useParticipants } from '@/stores/participants'
 import { useComputers } from '@/stores/computers'
 import { useConversations } from '@/stores/conversations'
@@ -66,6 +67,15 @@ export function AgentEditor({ agent, onClose, onSaved }: Props) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(agent?.avatarUrl ?? null)
+  // AI avatars need an endpoint that can draw; the server reports whether one
+  // is configured (Me → 本地服务 → 模型服务).
+  const llmHealth = useLlmHealth()
+  const imagesAvailable = llmHealth?.images?.available !== false
+  const imageReason = t('agent.imageUnavailable', {
+    // On the unavailable path images.endpoint is null, so name the text
+    // endpoint the server reported — that is the one that cannot draw.
+    endpoint: llmHealth?.endpoint ?? 'api.openai.com',
+  })
   const [generatingAvatar, setGeneratingAvatar] = useState(false)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [avatarErr, setAvatarErr] = useState<string | null>(null)
@@ -648,7 +658,8 @@ export function AgentEditor({ agent, onClose, onSaved }: Props) {
                 <button
                   type="button"
                   onClick={generateAvatar}
-                  disabled={!editing || generatingAvatar}
+                  disabled={!editing || generatingAvatar || !imagesAvailable}
+                  title={imagesAvailable ? undefined : imageReason}
                   className="self-start inline-flex items-center gap-1.5 px-3.5 py-2 rounded-[10px] text-[12.5px] font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{
                     // Hardcoded purple — this button intentionally keeps the
@@ -674,6 +685,14 @@ export function AgentEditor({ agent, onClose, onSaved }: Props) {
                 {generatingAvatar && (
                   <div className="text-[11.5px] text-whisper-deep font-display italic leading-[1.5]">
                     {t('agent.composingPortrait', { name: name || t('agent.composingPortraitFallback') })}
+                  </div>
+                )}
+
+                {/* No image endpoint ⇒ say so where the button is, rather than
+                    letting the click surface a provider error. Upload still works. */}
+                {!imagesAvailable && (
+                  <div className="text-[11.5px] text-ink-400 leading-[1.5] max-w-[420px]">
+                    {imageReason}
                   </div>
                 )}
 

@@ -247,7 +247,15 @@ type AnyResponse = { usage?: unknown } & Record<string, unknown>
  *  enforced by `scripts/guard-llm-tracked.mjs` allowlist.
  */
 export async function getTrackedLlmClient(ctx: LlmCallContext): Promise<OpenAI> {
-  const raw = await getLlmClient(ctx.companyId)
+  return trackLlmClient(await getLlmClient(ctx.companyId), ctx)
+}
+
+/**
+ * The same wrapping, over a client the caller supplies. Images need this: they
+ * go to their own endpoint (server/src/image-service.ts), which is not the
+ * tenant's text client — a DeepSeek endpoint cannot draw.
+ */
+export function trackLlmClient(raw: OpenAI, ctx: LlmCallContext): OpenAI {
 
   // Wrap an awaited create() with timing + ledger. Used by responses & chat.
   const wrapAwaited = (

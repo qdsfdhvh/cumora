@@ -13,6 +13,7 @@ import { pool } from '../db/pool.js'
 import type { PoolClient } from 'pg'
 import { storage, freshenAttachmentUrl, type StoredAttachment } from '../storage.js'
 import { env } from '../env.js'
+import { imageEndpoint } from '../image-service.js'
 import type { CliResult, CliSideEffect } from './cli-result.js'
 import { fetchImageBytes } from './image-fetcher.js'
 import { stripLoneSurrogates } from './text-safety.js'
@@ -2503,23 +2504,24 @@ async function generateAndUploadImage(opts: {
   // get pooled with avatar regeneration. Both ultimately hit the same image
   // model but the spend driver is very different (per agent action vs per
   // agent creation), and the operator will want to slice them apart.
-  // Image generation is not part of the OpenAI-compatible Chat Completions
-  // surface, so a custom endpoint (DeepSeek and friends, or a local model
-  // server) cannot serve this. Say what to do instead — the provider's own 404
-  // reads as a mystery, and the app can upload a picture just as well.
-  if (env.LLM_BASE_URL) {
-    throw new Error(
-      `image generation is unavailable on ${env.LLM_BASE_URL} (that endpoint serves text, not images) — upload a picture instead`,
-    )
+  // Images go to their own endpoint (server/src/image-service.ts), which is why
+  // a text-only provider no longer breaks this in a mysterious way: either an
+  // image service is configured, or the caller is told to configure one.
+  const endpoint = imageEndpoint()
+  if (!endpoint.available) {
+    throw new Error(`image generation is unavailable: ${endpoint.reason} — configure an image service, or upload a picture instead`)
   }
-  const { getTrackedLlmClient } = await import('./llm-ledger.js')
-  const client = await getTrackedLlmClient({
+  const [{ trackLlmClient }, { imageClient }] = await Promise.all([
+    import('./llm-ledger.js'),
+    import('../image-service.js'),
+  ])
+  const client = trackLlmClient(imageClient(), {
     purpose: 'agent-image',
     companyId: opts.tenant, agentId: opts.agentId,
     extras: { size: opts.size, promptPreview: opts.prompt.slice(0, 120) },
   })
   const r = await client.images.generate({
-    model: env.OPENAI_IMAGE_MODEL,
+    model: endpoint.model,
     prompt: opts.prompt,
     size,
     n: 1,
