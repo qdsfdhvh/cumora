@@ -16,9 +16,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import { useT } from '@/lib/i18n'
+import { refreshLlmHealth, useLlmHealth } from '@/lib/llmHealth'
 import type { LocalServerStatus } from '@/lib/runtime'
 
 type Preset = 'openai' | 'deepseek' | 'custom'
+
+/** Absolute local time — no relative-time keys needed, and no ambiguity about
+ *  which timezone a "3 minutes ago" was computed in. */
+function whenLabel(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
+}
 
 const PRESETS: Record<Exclude<Preset, 'custom'>, { baseUrl: string; model: string; support: string }> = {
   // Empty strings mean "leave it alone": the server's built-in defaults.
@@ -41,6 +49,7 @@ export function ModelServicePanel({
 }) {
   const t = useT()
   const llm = status?.llm
+  const health = useLlmHealth()
   const [preset, setPreset] = useState<Preset>('openai')
   const [baseUrl, setBaseUrl] = useState('')
   const [model, setModel] = useState('')
@@ -108,6 +117,8 @@ export function ModelServicePanel({
       setTestMsg(t('me.llmTestFail', { error: e instanceof Error ? e.message : String(e) }))
     } finally {
       setTesting(false)
+      // The probe is a recorded call, so the health line can answer "fixed?".
+      void refreshLlmHealth()
     }
   }
 
@@ -179,6 +190,25 @@ export function ModelServicePanel({
               className={field}
             />
           </label>
+        </div>
+      )}
+
+      {health && (
+        <div
+          className={health.failing
+            ? 'rounded-[8px] bg-coral-soft px-2.5 py-1.5 text-[11.5px] leading-snug text-coral-deep break-words'
+            : 'text-[11.5px] leading-snug text-ink-400 break-words'}
+        >
+          {health.failing && health.latest
+            ? t('me.llmHealthFailing', {
+                status: health.latest.status,
+                model: health.latest.model,
+                error: health.latest.error ?? '',
+                when: whenLabel(health.latest.createdAt),
+              })
+            : health.latestOk
+              ? t('me.llmHealthOk', { when: whenLabel(health.latestOk.createdAt), purpose: health.latestOk.purpose })
+              : t('me.llmHealthNone')}
         </div>
       )}
 

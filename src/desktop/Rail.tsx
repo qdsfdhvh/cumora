@@ -4,6 +4,7 @@ import { useAuth, useMe } from '@/stores/auth'
 import { useConversations, isMuted } from '@/stores/conversations'
 import { useComputers } from '@/stores/computers'
 import { useDevtools } from '@/stores/devtools'
+import { useLlmHealth } from '@/lib/llmHealth'
 import { useParticipants } from '@/stores/participants'
 import { Avatar } from '@/components/Avatar'
 import { IChat, IWhisper, IAgent, IAgents, IBoard, IDoc, ICalendar, IObserve, IExit, IShip } from '@/components/icons'
@@ -40,6 +41,11 @@ export function Rail() {
   // Any paired computer running an outdated daemon → a gold dot on the avatar
   // so the upgrade nudge is visible app-wide, not just inside the You view.
   const daemonOutdated = useComputers((s) => Object.values(s.byId).some((c) => c.daemonOutdated))
+  // The server's own model service failing is silent by nature (agents keep
+  // answering on the paired computer), so it gets the same treatment as an
+  // outdated daemon: a dot on the avatar, where the fix lives.
+  const llmHealth = useLlmHealth()
+  const llmFailing = llmHealth?.failing === true
   useEffect(() => {
     void loadDevtools()
   }, [loadDevtools])
@@ -83,13 +89,18 @@ export function Rail() {
         type="button"
         className="mb-3.5 relative"
         onClick={() => setView('me')}
-        title={daemonOutdated ? t('common.daemonOutdatedTip') : (authUser?.name ?? t('common.you'))}
+        title={llmFailing
+          ? t('me.llmHealthTip')
+          : daemonOutdated ? t('common.daemonOutdatedTip') : (authUser?.name ?? t('common.you'))}
       >
         <Avatar p={meAvatar} size={44} ringColor="var(--cloud)" />
-        {daemonOutdated && (
+        {(llmFailing || daemonOutdated) && (
           <span
             className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full"
-            style={{ background: 'var(--gold-deep)', border: '2px solid var(--cloud)' }}
+            style={{
+              background: llmFailing ? 'var(--coral-deep, #E4573D)' : 'var(--gold-deep)',
+              border: '2px solid var(--cloud)',
+            }}
           />
         )}
       </button>

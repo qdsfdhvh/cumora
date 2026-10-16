@@ -73,6 +73,10 @@ export type LlmCallPurpose =
   // impossible — they're driven by completely different actions.
   | 'avatar-image'
   | 'agent-image'
+  // The 模型服务 panel's 测试连接 button. Recorded like any other call so a
+  // successful probe clears the "failing" state the app shows, instead of
+  // having a separate notion of health that can disagree with the ledger.
+  | 'llm-probe'
 
 export type LlmCallStatus = 'ok' | 'rate_limited' | 'timeout' | 'failed'
 export type LlmCallSource = 'cloud' | 'byoa-claude' | 'byoa-codex' | 'byoa-grok' | 'byoa-cursor' | 'byoa-opencode' | 'byoa-pi' | 'byoa-gemini' | 'byoa-qwen' | 'byoa-antigravity' | 'byoa-zcode'

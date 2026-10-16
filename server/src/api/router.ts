@@ -24,7 +24,7 @@ import { enqueueWorkspaceCleanup, nudgeWorkspaceCleanupWorker } from '../workspa
 import { collectDocumentStorageKeys, evictDocumentRoom } from '../documents/rooms.js'
 import { createPoll, castVote, closePoll, PollError } from '../polls.js'
 import { env } from '../env.js'
-import { getLlmClient, llmEndpointLabel } from '../llm.js'
+import { llmEndpointLabel } from '../llm.js'
 import { publicBodyParserError } from '../body-parser-errors.js'
 import { startConvene } from '../agents/convene.js'
 import { ensureDirectConversation } from '../agents/private_chat.js'
@@ -707,12 +707,16 @@ api.get('/auth/providers', safe(async (_req, res) => {
  * speak Chat Completions — instead of a silent agent that never starts.
  */
 api.post('/local/llm-probe', safe(async (req, res) => {
-  requireAuth(req)
+  const { companyId } = await requireCompany(req)
   const model = typeof req.body?.model === 'string' && req.body.model.trim() ? req.body.model.trim() : env.OPENAI_MODEL_SUPPORT
   const started = Date.now()
   const endpoint = llmEndpointLabel()
   try {
-    const client = await getLlmClient(null)
+    // Recorded deliberately: this is a real call on the owner's key, and having
+    // it in the ledger is what lets a successful probe clear the "model service
+    // is failing" state the app shows (see /local/llm-health below).
+    const { getTrackedLlmClient } = await import('../agents/llm-ledger.js')
+    const client = await getTrackedLlmClient({ purpose: 'llm-probe', companyId })
     const r = (await client.responses.create({
       model,
       input: 'reply with the single word: pong',
@@ -735,6 +739,49 @@ api.post('/local/llm-probe', safe(async (req, res) => {
       error: e instanceof Error ? e.message : String(e),
     })
   }
+}))
+
+/**
+ * Is the server's model service actually working?
+ *
+ * Reads the ledger instead of keeping separate state: every server-side call
+ * already lands in `llm_calls` with its status and error, so "the newest call
+ * failed and nothing has succeeded since" is a two-row query.
+ *
+ * It exists because a dead key is otherwise invisible. On the install this was
+ * written on, the agenda classifier failed 246 times in a row with zero
+ * successes, and nothing in the app said a word: the agents still answered,
+ * because their reasoning runs on the paired computer, not on this key.
+ */
+api.get('/local/llm-health', safe(async (req, res) => {
+  const { companyId } = await requireCompany(req)
+  // Only calls the SERVER made (`source = 'cloud'`). A BYOA agent turn also
+  // lands in this table, but it ran on the paired computer's engine and never
+  // touched this key — counting one as a success would clear the warning while
+  // the key stays broken.
+  const newest = async (onlyOk: boolean) => {
+    const { rows } = await pool.query<{
+      purpose: string; source: string; model: string; status: string; error: string | null; created_at: string
+    }>(
+      `SELECT purpose, source, model, status, error, created_at
+         FROM llm_calls
+        WHERE company_id = $1 AND source = 'cloud' ${onlyOk ? "AND status = 'ok'" : ''}
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [companyId],
+    )
+    const r = rows[0]
+    return r
+      ? { purpose: r.purpose, source: r.source, model: r.model, status: r.status, error: r.error, createdAt: r.created_at }
+      : null
+  }
+  const [latest, latestOk] = await Promise.all([newest(false), newest(true)])
+  const failing = Boolean(
+    latest
+    && latest.status !== 'ok'
+    && (!latestOk || new Date(latest.createdAt).getTime() > new Date(latestOk.createdAt).getTime()),
+  )
+  res.json({ endpoint: llmEndpointLabel(), failing, latest, latestOk })
 }))
 
 api.post('/auth/local', safe(async (req, res) => {
