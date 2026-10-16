@@ -1288,7 +1288,10 @@ export function ObservabilityView() {
       if (document.visibilityState === 'hidden') return
       void loadRuns()
       void loadEvents(selectedId)
-    }, 3000)
+      // 15s, not the cloud dashboard's 3s: every poll is a query against the
+      // app's own single-backend database, and a human watching a run list
+      // does not need more than a few refreshes a minute.
+    }, 15_000)
     return () => window.clearInterval(id)
   }, [autoRefresh, loadEvents, loadRuns, selectedId])
 
