@@ -162,6 +162,12 @@ and emulates the `pg` pool contract:
   serializes transactions, so that nests into a deadlock; it fails fast with
   `[embedded-pg] backend wait timeout` after 20 s rather than hanging forever.
   Hoist such reads above the transaction.
+- Every statement runs under a **statement timeout** (default 30 s,
+  `CUMORA_EMBEDDED_STATEMENT_TIMEOUT_MS`). One backend means one runaway query
+  would freeze the whole app — no HTTP, no timers, no signal handling — so the
+  ceiling is what keeps a bad query a *logged error* instead of a hung window.
+  Statements slower than 3 s (`CUMORA_EMBEDDED_SLOW_QUERY_MS`) are logged with
+  their SQL to `logs/server.log`, which is how you find the culprit.
 - `pg_advisory_lock` is single-session here — fine for one server instance.
 - `pgvector` is unavailable, so agent memory degrades to the recency-only path
   the code already supports; `pg_trgm` ships with PGlite and is used normally.
@@ -169,6 +175,35 @@ and emulates the `pg` pool contract:
 Local-storage URLs are absolute (`CUMORA_UPLOADS_BASE`): the packaged renderer
 runs on `app://cumora`, where a relative `/uploads/...` would resolve against
 the app scheme and 404 every avatar and attachment.
+
+## If the database is damaged
+
+PGlite dies with the process. **Quitting the app closes it cleanly** (that is
+what `Me → Quit`, ⌘Q, and the tray menu do), but a hard kill — `kill -9`, a
+force-quit from Activity Monitor, a kernel panic, a power loss — can leave it
+needing repair. Never SIGKILL the server process to "fix" a slow app; if you
+must stop it, send SIGTERM and let it shut down.
+
+Two failure modes, both recoverable:
+
+| symptom | cause | remedy |
+|---|---|---|
+| App shows nothing and `logs/server.log` ends in `PGlite failed to initialize properly` (Postgres log: `xlog flush request … is not satisfied`) | a hard kill left an FSM page past the end of the WAL | automatic: startup quarantines the `*_fsm` files next to `pgdata` and retries (they are disposable hints) |
+| A query that should take milliseconds spins forever / every request about one table times out | corrupt tuples in a table's heap (a HOT-chain cycle makes scans loop) | `node --import tsx scripts/local-db-doctor.ts --repair` |
+
+Diagnose and repair with the app **closed** — the database takes a single
+writer:
+
+```bash
+node --import tsx scripts/local-db-doctor.ts                    # integrity report
+node --import tsx scripts/local-db-doctor.ts --repair           # VACUUM FULL / REINDEX what is broken
+node --import tsx scripts/local-db-doctor.ts --reset-stuck-runs # close runs left 'running' by a crash
+```
+
+The report uses Postgres' own tools: `verify_heapam` (amcheck) per table and
+`bt_index_check` per b-tree index. A crash can lose the transactions that were
+in flight — in practice the last few messages; everything committed earlier is
+durable, and `logs/server.log` shows what the process was doing.
 
 ## Verification checklist
 

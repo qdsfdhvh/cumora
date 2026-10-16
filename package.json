@@ -53,7 +53,8 @@
     "mobile:android": "npm run mobile:sync && npx cap open android",
     "mobile:android:run": "npm run mobile:sync && npx cap run android",
     "build:server": "node scripts/build-server-bundle.mjs",
-    "build:local": "npm run build:server && npm run build"
+    "build:local": "npm run build:server && npm run build",
+    "db:doctor": "tsx scripts/local-db-doctor.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1045.0",
