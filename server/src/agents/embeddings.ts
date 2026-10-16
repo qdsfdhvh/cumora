@@ -24,7 +24,19 @@ const EMBED_DIM = 1536
  *  recent inbox messages. */
 const MAX_INPUT_CHARS = 8000
 
-const client = new OpenAI({ apiKey: env.OPENAI_API_KEY })
+/**
+ * Built lazily, on first use. The SDK throws from its constructor when there is
+ * no key, so a module-scope client turned "no key yet" into a boot failure:
+ * a fresh install (or anyone who cleared the field) got a server that died
+ * during import, which also meant the in-app prompt that sets the key could
+ * never be reached. Embeddings are already optional — `embedText` returns null
+ * on failure — so the client is simply created when there is a call to make.
+ */
+let client: OpenAI | null = null
+function openai(): OpenAI {
+  if (!client) client = new OpenAI({ apiKey: env.OPENAI_API_KEY })
+  return client
+}
 
 /** Test-only override. When set, every {@link embedText} call returns
  *  whatever this function produces — bypassing the real OpenAI
@@ -44,7 +56,7 @@ export async function embedText(text: string): Promise<string | null> {
   if (!trimmed) return null
   if (testEmbedOverride) return testEmbedOverride(trimmed)
   try {
-    const resp = await client.embeddings.create({
+    const resp = await openai().embeddings.create({
       model: EMBED_MODEL,
       input: trimmed.length > MAX_INPUT_CHARS ? trimmed.slice(0, MAX_INPUT_CHARS) : trimmed,
     })

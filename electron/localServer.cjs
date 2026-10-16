@@ -74,7 +74,9 @@ function writeEnvFile(values) {
   const body = [
     '# Cumora local server — secrets for THIS machine only.',
     '# Written by the desktop app; safe to edit by hand (restart the app after).',
-    ...ENV_FILE_KEYS.map((k) => `${k}=${merged[k] ?? ''}`),
+    // Never blank a line that already has a value: merging a partial update
+    // (say the durability toggle) must not erase the key.
+    ...ENV_FILE_KEYS.map((k) => `${k}=${merged[k] ?? ''}`).filter((line) => !line.endsWith('=')),
     '',
   ].join('\n')
   fs.writeFileSync(envFilePath(), body, { mode: 0o600 })
@@ -269,29 +271,44 @@ class LocalServer {
       return
     }
 
-    const child = utilityProcess.fork(entry, [], {
-      cwd: localDir(),
-      env: this.serverEnv(),
-      stdio: 'pipe',
-      serviceName: 'cumora-local-server',
-    })
-    this.child = child
-
-    child.stdout?.on('data', (chunk) => this.pushLog(String(chunk)))
-    child.stderr?.on('data', (chunk) => this.pushLog(String(chunk)))
-    child.on('exit', (code) => {
-      this.child = null
-      if (this.state !== 'stopped') {
-        this.state = 'error'
-        this.detail = `local server exited (code ${code ?? 'null'})`
-        this.emit()
-      }
-    })
-
-    const ok = await this.waitHealth(HEALTH_TIMEOUT_MS).catch(() => false)
+    const ok = await this.#forkAndWait(entry)
     this.state = ok ? 'ready' : 'error'
-    this.detail = ok ? 'ready' : 'local server did not become healthy in time'
+    this.detail = ok ? 'ready' : 'local server did not become healthy in time — see 本地服务 → 日志'
     this.emit()
+  }
+
+  /**
+   * Fork the bundled server and wait for it to answer a health probe. Retried
+   * once, because a restart can race the previous process releasing the port and
+   * the database directory; one retry turns that into a two-second blip instead
+   * of a dead server the owner has to figure out.
+   */
+  async #forkAndWait(entry) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const child = utilityProcess.fork(entry, [], {
+        cwd: localDir(),
+        env: this.serverEnv(),
+        stdio: 'pipe',
+        serviceName: 'cumora-local-server',
+      })
+      this.child = child
+      child.stdout?.on('data', (chunk) => this.pushLog(String(chunk)))
+      child.stderr?.on('data', (chunk) => this.pushLog(String(chunk)))
+      child.on('exit', (code) => {
+        this.child = null
+        if (this.state !== 'stopped') {
+          this.state = 'error'
+          this.detail = `local server exited (code ${code ?? 'null'}) — see 本地服务 → 日志`
+          this.emit()
+        }
+      })
+      if (await this.waitHealth(HEALTH_TIMEOUT_MS).catch(() => false)) return true
+      if (attempt === 1) {
+        this.pushLog(`[local-server] attempt ${attempt} did not answer health; retrying\n`)
+        await this.#stopAndWait()
+      }
+    }
+    return false
   }
 
   async waitHealth(timeoutMs) {
@@ -319,12 +336,41 @@ class LocalServer {
     return this.status()
   }
 
+  /**
+   * Stop and wait for the old process to really be gone before starting the
+   * next one. A flat sleep here was a bug: PGlite releases its data directory
+   * as the child tears down, so starting the replacement too early made it die
+   * on a locked database — the owner saw "local server did not become healthy
+   * in time" with nothing to act on.
+   */
   async restart() {
-    this.stop()
-    // Give the OS a beat to release the listening socket / PGlite lock.
-    await new Promise((resolve) => setTimeout(resolve, 600))
-    this.state = 'stopped'
+    await this.#stopAndWait()
     return this.start()
+  }
+
+  /** SIGTERM the child, then resolve once it exited (or the deadline passed). */
+  async #stopAndWait(timeoutMs = 10000) {
+    const child = this.child
+    this.child = null
+    this.state = 'stopped'
+    if (!child || child.exitCode !== null || child.signalCode !== null) return
+    await new Promise((resolve) => {
+      let settled = false
+      const done = () => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+      child.once('exit', done)
+      try {
+        child.kill()
+      } catch {
+        done()
+      }
+      setTimeout(done, timeoutMs)
+    })
+    // The port and the database directory are released slightly after exit.
+    await new Promise((r) => setTimeout(r, 300))
   }
 
   stop() {
