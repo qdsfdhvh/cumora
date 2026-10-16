@@ -18,9 +18,46 @@ import { createSession, gravatarUrlForEmail } from './auth.js'
 import { insertPersonalWorkspace } from './personal-workspace.js'
 import { joinAllHands } from './onboardCompany.js'
 
-/** Stable identity for the machine's local user. One user per database. */
+/** Stable identity for the machine's local user. One user per database. The
+ *  address is only a default: the owner can change it in Me → profile, so
+ *  lookups key on the local IDENTITY (not the address) and fall back to the
+ *  default address only when no local identity exists yet. */
 const LOCAL_EMAIL = 'local@cumora.local'
 const LOCAL_PROVIDER = 'local'
+
+interface LocalUserRow {
+  id: string
+  email: string
+  display_name: string
+  company_id: string | null
+}
+
+const LOCAL_USER_SELECT = `
+  SELECT u.id, u.email, u.display_name,
+         (SELECT company_id FROM company_members WHERE user_id = u.id ORDER BY joined_at ASC LIMIT 1) AS company_id
+    FROM users u`
+
+/** The machine's local account, keyed on its local IDENTITY so an edited
+ *  email address still resolves to the same user (falling back to the default
+ *  address for databases written before the identity row existed). */
+async function findLocalUser(): Promise<LocalUserRow | null> {
+  const byIdentity = await pool.query<LocalUserRow>(
+    `SELECT u.id, u.email, u.display_name,
+            (SELECT company_id FROM company_members WHERE user_id = u.id ORDER BY joined_at ASC LIMIT 1) AS company_id
+       FROM user_identities ui
+       JOIN users u ON u.id = ui.user_id
+      WHERE ui.provider = $1
+      ORDER BY ui.created_at ASC
+      LIMIT 1`,
+    [LOCAL_PROVIDER],
+  )
+  if (byIdentity.rows[0]) return byIdentity.rows[0]
+  const byEmail = await pool.query<LocalUserRow>(
+    `${LOCAL_USER_SELECT} WHERE LOWER(u.email) = $1 LIMIT 1`,
+    [LOCAL_EMAIL],
+  )
+  return byEmail.rows[0] ?? null
+}
 
 export interface LocalAuthResult {
   token: string
@@ -37,25 +74,20 @@ export async function signInLocal(opts: {
   ip?: string | null
   userAgent?: string | null
 }): Promise<LocalAuthResult> {
-  // Fast path: user already exists.
-  const existing = await pool.query<{ id: string; email: string; display_name: string; company_id: string | null }>(
-    `SELECT u.id, u.email, u.display_name,
-            (SELECT company_id FROM company_members WHERE user_id = u.id ORDER BY joined_at ASC LIMIT 1) AS company_id
-       FROM users u WHERE LOWER(u.email) = $1 LIMIT 1`,
-    [LOCAL_EMAIL],
-  )
-  if (existing.rows[0]) {
-    const u = existing.rows[0]
+  // Fast path: the machine's local account already exists.
+  const existing = await findLocalUser()
+
+  if (existing) {
     // Self-heal: a local user with no workspace (e.g. a half-finished first
     // run) gets their personal workspace bootstrapped on next sign-in.
-    const companyId = u.company_id ?? await createPersonalWorkspace({
-      userId: u.id,
-      displayName: u.display_name,
+    const companyId = existing.company_id ?? await createPersonalWorkspace({
+      userId: existing.id,
+      displayName: existing.display_name,
     })
-    const { token, expiresAt } = await createSession(u.id, { ip: opts.ip ?? undefined, ua: opts.userAgent ?? undefined })
+    const { token, expiresAt } = await createSession(existing.id, { ip: opts.ip ?? undefined, ua: opts.userAgent ?? undefined })
     return {
       token, expiresAt,
-      user: { id: u.id, email: u.email, displayName: u.display_name },
+      user: { id: existing.id, email: existing.email, displayName: existing.display_name },
       companyId,
     }
   }

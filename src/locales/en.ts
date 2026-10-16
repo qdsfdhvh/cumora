@@ -1258,6 +1258,13 @@ export const en = {
   'desktop.openingShip': 'Opening Ship…',
   // ─── me view (profile / quota / computers / projects / trust) ─────
   'me.sectionIdentity': '↳ Identity',
+  'me.editProfile': 'Edit profile',
+  'me.nameLabel': 'Name',
+  'me.emailLabel': 'Email',
+  'me.changeAvatar': 'Change avatar',
+  'me.avatarHint': 'Click the avatar to pick an image',
+  'me.profileSaved': 'Profile updated',
+  'me.profileLocalNote': 'Local to this machine — nothing leaves it.',
   'me.sectionSession': '↳ Session',
   'me.sectionCommunity': '↳ Community & feedback',
   'me.sectionAbout': '↳ About',

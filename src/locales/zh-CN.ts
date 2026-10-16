@@ -1260,6 +1260,13 @@ export const zhCN: Partial<Record<keyof typeof en, string>> = {
   'desktop.openingShip': '正在打开交付…',
   // ─── 「我」视图（资料 / 配额 / 计算机 / 项目 / 信任）─────────────
   'me.sectionIdentity': '↳ 身份',
+  'me.editProfile': '编辑资料',
+  'me.nameLabel': '名字',
+  'me.emailLabel': '邮箱',
+  'me.changeAvatar': '更换头像',
+  'me.avatarHint': '点击头像选择图片',
+  'me.profileSaved': '资料已更新',
+  'me.profileLocalNote': '只保存在这台 Mac 上，不会上传。',
   'me.sectionSession': '↳ 会话',
   'me.sectionCommunity': '↳ 社区与反馈',
   'me.sectionAbout': '↳ 关于',

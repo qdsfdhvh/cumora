@@ -815,6 +815,17 @@ export interface ShippingOverview {
   dueReadbacks: Array<{ id: string; featureId: string; featureTitle: string; readbackDueAt: string; readbackStatus: 'pending' | 'overdue' }>
 }
 
+/** Read a File into base64 (chunked so large images don't blow the call stack). */
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  }
+  return btoa(binary)
+}
+
 export const api = {
   health: () => http<{ ok: boolean; ts: number }>('/health'),
   me: () => http<{ id: string; name: string; kind: string }>('/me'),
@@ -826,6 +837,28 @@ export const api = {
       '/auth/local',
       { method: 'POST', body: JSON.stringify({ displayName: displayName ?? null }) },
     ),
+  /** Local profile editing (`PATCH /me`). The personal build owns its own
+   *  identity — name and email are plain local rows, not provider claims. */
+  updateProfile: (input: { displayName?: string; email?: string }) =>
+    http<{ user: { id: string; email: string; name: string; avatarUrl: string | null } }>(
+      '/me',
+      { method: 'PATCH', body: JSON.stringify(input) },
+    ),
+  /** Replace the avatar with an uploaded image (`POST /me/avatar`). */
+  uploadAvatar: async (file: File): Promise<{ url: string; key: string }> => {
+    const caps = await api.uploadCapabilities()
+    if (caps.maxBytes && file.size > caps.maxBytes) {
+      throw new Error(`image too large: ${Math.round(file.size / 1024 / 1024)}MB (max ${Math.round(caps.maxBytes / 1024 / 1024)}MB)`)
+    }
+    return http<{ url: string; key: string }>('/me/avatar', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: file.name,
+        mime: file.type || 'application/octet-stream',
+        dataBase64: await fileToBase64(file),
+      }),
+    })
+  },
   authLogout: () =>
     http<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
   /** Permanently delete the signed-in user's account. Soft-deletes
@@ -1276,17 +1309,9 @@ export const api = {
     }
 
     // Local-storage fallback — base64 through the server.
-    const buf = await file.arrayBuffer()
-    const bytes = new Uint8Array(buf)
-    let binary = ''
-    const chunk = 0x8000
-    for (let i = 0; i < bytes.length; i += chunk) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
-    }
-    const dataBase64 = btoa(binary)
     return http<ApiAttachment>('/uploads', {
       method: 'POST',
-      body: JSON.stringify({ name: file.name, mime, dataBase64 }),
+      body: JSON.stringify({ name: file.name, mime, dataBase64: await fileToBase64(file) }),
     })
   },
   refreshUploadUrl: (input: string | { url?: string; key?: string }) =>

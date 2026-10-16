@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LocalServerStatus } from '@/lib/runtime'
 import { useParticipants } from '@/stores/participants'
 import { useComputers } from '@/stores/computers'
@@ -69,6 +69,67 @@ function ProfileTab() {
   const authUser = useAuth((s) => s.user)
   const meParticipant = useParticipants((s) => (authUser ? s.byId[authUser.id] : null))
   const serverOrigin = getServerOrigin() || 'same-origin (Vite proxy)'
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // The personal build owns its identity (there is no provider to re-read it
+  // from), so the card doubles as the editor.
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+
+  function startEditing() {
+    setName(authUser?.name ?? '')
+    setEmail(authUser?.email ?? '')
+    setErr(null)
+    setEditing(true)
+  }
+
+  /** Re-read the identity so the card, the roster, and every message avatar
+   *  show the new values without a reload. */
+  async function refreshIdentity() {
+    const me = await api.authMe()
+    useAuth.getState().setMe(me.user, me.companies, me.activeCompanyId)
+    await useParticipants.getState().load()
+  }
+
+  async function save() {
+    setBusy(true)
+    setErr(null)
+    try {
+      await api.updateProfile({ displayName: name, email })
+      await refreshIdentity()
+      setEditing(false)
+      flashSaved()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function pickAvatar(file: File) {
+    setBusy(true)
+    setErr(null)
+    try {
+      await api.uploadAvatar(file)
+      await refreshIdentity()
+      setEditing(false)
+      flashSaved()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const flashSaved = () => {
+    setSaved(true)
+    window.setTimeout(() => setSaved(false), 2500)
+  }
 
   async function signOut() {
     // Server-side: revoke the session row so the token is dead even if it
@@ -80,25 +141,112 @@ function ProfileTab() {
 
   if (!authUser) return null
   const providers = authUser.providers ?? []
+
   return (
     <div className="space-y-6">
       <Section title={t('me.sectionIdentity')}>
         <div className="bg-cloud rounded-[14px] p-5 flex items-start gap-5"
           style={{ border: '1px solid var(--ink-100)' }}>
-          {meParticipant
-            ? <Avatar p={meParticipant} size={88} />
-            : <div className="w-[88px] h-[88px] rounded-full bg-ink-100" />}
-          <div className="flex-1 min-w-0">
-            <h2 className="font-display font-medium text-[26px] tracking-tight truncate" style={{ letterSpacing: '-0.02em' }}>{authUser.name}</h2>
-            <div className="font-display italic text-[14px] text-ink-500 truncate">{authUser.email}</div>
-            <div className="flex items-center gap-2 mt-3 flex-wrap">
-              {providers.map((p) => (
-                <span key={p} className="text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-paper text-ink-700" style={{ border: '1px solid var(--ink-100)' }}>
-                  {p}
+          <div className="flex flex-col items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => (editing ? fileInputRef.current?.click() : startEditing())}
+              disabled={busy}
+              title={editing ? t('me.changeAvatar') : t('me.editProfile')}
+              className="relative rounded-full transition-opacity disabled:opacity-60 hover:opacity-90"
+            >
+              {meParticipant
+                ? <Avatar p={meParticipant} size={88} />
+                : <div className="w-[88px] h-[88px] rounded-full bg-ink-100" />}
+              {editing && (
+                <span className="absolute inset-0 rounded-full grid place-items-center bg-black/45 text-white text-[11px] font-display">
+                  {t('me.changeAvatar')}
                 </span>
-              ))}
-            </div>
+              )}
+            </button>
+            {editing && (
+              <span className="text-[10.5px] text-ink-400 text-center max-w-[96px] leading-tight">
+                {t('me.avatarHint')}
+              </span>
+            )}
           </div>
+
+          <div className="flex-1 min-w-0">
+            {editing ? (
+              <div className="flex flex-col gap-2.5 max-w-[420px]">
+                <label className="text-[11px] text-ink-400 font-display">{t('me.nameLabel')}</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  maxLength={64}
+                  className="h-10 px-3 rounded-[8px] border border-ink-100 bg-paper text-ink-900 text-[14px] focus:outline-none focus:border-sky2-300"
+                />
+                <label className="text-[11px] text-ink-400 font-display">{t('me.emailLabel')}</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  spellCheck={false}
+                  className="h-10 px-3 rounded-[8px] border border-ink-100 bg-paper text-ink-900 text-[14px] focus:outline-none focus:border-sky2-300"
+                />
+                <div className="text-[11px] text-ink-300 font-display italic">{t('me.profileLocalNote')}</div>
+                <div className="flex items-center gap-2 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={save}
+                    disabled={busy || !name.trim() || !email.trim()}
+                    className="h-9 px-4 rounded-[8px] bg-skype hover:bg-skype-deep text-white text-[13px] font-display transition-colors disabled:opacity-40"
+                  >
+                    {t('common.save')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setEditing(false); setErr(null) }}
+                    disabled={busy}
+                    className="h-9 px-4 rounded-[8px] bg-paper text-ink-700 hover:bg-ink-100 text-[13px] font-display transition-colors disabled:opacity-40"
+                  >
+                    {t('common.cancel')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <h2 className="font-display font-medium text-[26px] tracking-tight truncate" style={{ letterSpacing: '-0.02em' }}>{authUser.name}</h2>
+                <div className="font-display italic text-[14px] text-ink-500 truncate">{authUser.email}</div>
+                <div className="flex items-center gap-2 mt-3 flex-wrap">
+                  {providers.map((p) => (
+                    <span key={p} className="text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-paper text-ink-700" style={{ border: '1px solid var(--ink-100)' }}>
+                      {p}
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
+            {err && <div className="text-[11.5px] text-red-600 mt-2 break-words">{err}</div>}
+            {saved && <div className="text-[11.5px] text-ink-500 mt-2 font-display">{t('me.profileSaved')}</div>}
+          </div>
+
+          {!editing && (
+            <button
+              type="button"
+              onClick={startEditing}
+              className="shrink-0 h-9 px-4 rounded-[8px] bg-paper text-ink-700 hover:bg-ink-100 text-[13px] font-display transition-colors"
+            >
+              {t('me.editProfile')}
+            </button>
+          )}
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) void pickAvatar(file)
+            }}
+          />
         </div>
       </Section>
 
