@@ -245,6 +245,25 @@ export const env = {
    *  app's Application Support directory instead of server/uploads). */
   UPLOAD_DIR_OVERRIDE: process.env.CUMORA_UPLOAD_DIR ?? '',
   /**
+   * Embedded write durability.
+   *
+   * `safe` (default) keeps Postgres' default `synchronous_commit = on`: every
+   * commit is flushed before it returns, so a power loss or kernel panic loses
+   * nothing that was acknowledged.
+   *
+   * `fast` sets `synchronous_commit = off`: commits return as soon as the WAL is
+   * written to the OS (no fsync). Measured on this stack — PGlite, whose writes
+   * go through a WASM/FS layer rather than a raw block device — the gain is
+   * small: 0.18 ms → 0.16 ms per commit (~1.2×) over 200 single-row commits.
+   * It is therefore an opt-in, and the default stays `safe`.
+   *
+   * The trade is explicit: after a hard crash the last few committed
+   * transactions may be missing — the database is still *consistent*, just
+   * behind. Postgres documents this as "may lose recent transactions", not
+   * corruption.
+   */
+  DURABILITY: (process.env.CUMORA_DURABILITY ?? 'safe').toLowerCase() === 'fast' ? 'fast' : 'safe',
+  /**
    * Interface the HTTP server binds. Empty means every interface (the cloud
    * build sat behind a cluster Service). The personal build defaults to
    * loopback: `POST /api/auth/local` mints a session without any credential,

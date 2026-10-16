@@ -296,6 +296,25 @@ Each stays overridable: `REALTIME_OUTBOX_INTERVAL_MS`, `DB_GC_INTERVAL_MS`,
 `WORKSPACE_CLEANUP_INTERVAL_MS`, `EMAIL_RETRY_INTERVAL_MS`,
 `LLM_ROLLUP_INTERVAL_MS`.
 
+## Write durability
+
+The embedded database commits with Postgres' default `synchronous_commit = on`
+(every commit is flushed before it returns). `CUMORA_DURABILITY=fast` turns that
+off, or use **Me → 本地服务 → 写入持久性 → 快速**.
+
+It is opt-in because the measured gain here is small — PGlite writes through a
+WASM/FS layer, not a raw block device:
+
+```text
+synchronous_commit=on    200 single-row commits → 37ms  (0.18 ms/commit)
+synchronous_commit=off   200 single-row commits → 31ms  (0.16 ms/commit)  ≈1.2×
+```
+
+The trade: after a power loss or kernel panic the last few committed writes may
+be missing. The database stays consistent (`synchronous_commit` affects *how
+much* is durable, never whether the data files are torn), and the app already
+repairs the one startup failure mode a hard kill can produce (see below).
+
 ## Embedded-database constraints
 
 `server/src/db/embedded.ts` runs the whole server against one PGlite backend

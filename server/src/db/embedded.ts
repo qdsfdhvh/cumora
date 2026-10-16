@@ -152,6 +152,15 @@ export async function bootEmbeddedInfra(): Promise<void> {
   if (STATEMENT_TIMEOUT_MS > 0) {
     await db.query(`SET statement_timeout = ${Math.floor(STATEMENT_TIMEOUT_MS)}`)
   }
+  // Write durability is a per-session setting and the embedded pool has exactly
+  // one session, so applying it here covers every later statement. Default is
+  // Postgres' safe `on`; `fast` is an explicit opt-in (see env.DURABILITY).
+  if (process.env.CUMORA_DURABILITY?.toLowerCase() === 'fast') {
+    await db.query('SET synchronous_commit = off')
+    console.log('[embedded-pg] durability: fast (synchronous_commit=off — a hard crash may lose the last few commits)')
+  } else {
+    console.log('[embedded-pg] durability: safe (synchronous_commit=on)')
+  }
   console.log(`[embedded-pg] schema ready in ${Date.now() - t0}ms`)
 }
 

@@ -90,6 +90,8 @@ interface CumoraBridge {
     status: () => Promise<LocalServerStatus>
     setOpenAIKey: (key: string) => Promise<LocalServerStatus>
     restart: () => Promise<LocalServerStatus>
+    /** Switch write durability and restart the server. */
+    setDurability: (mode: 'safe' | 'fast') => Promise<LocalServerStatus>
     /** Ask where to save, then archive the data directory. */
     backup: () => Promise<{ cancelled?: boolean; ok?: boolean; path?: string; bytes?: number; error?: string }>
     /** Run the daemon CLI against the local server with a freshly minted code
@@ -119,6 +121,8 @@ export interface LocalServerStatus {
   hasApiKey: boolean
   /** True while a backup is in flight (the server pauses for a few seconds). */
   backingUp?: boolean
+  /** Write durability: 'safe' (default) or 'fast'. */
+  durability?: 'safe' | 'fast'
   /** On-disk directory holding the database, uploads, and server.env. */
   dataDir: string
   isDev: boolean

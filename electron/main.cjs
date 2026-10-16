@@ -1184,6 +1184,11 @@ ipcMain.handle('local-server:pair-this-mac', async (_event, options) => {
   })
 })
 
+ipcMain.handle('local-server:set-durability', async (_event, mode) => {
+  if (mode !== 'fast' && mode !== 'safe') return localServer.status()
+  return await localServer.setDurability(mode)
+})
+
 ipcMain.handle('local-server:restart', async () => {
   await localServer.restart()
   return localServer.status()

@@ -530,6 +530,30 @@ function AboutSection() {
           </div>
           {saved && <div className="text-[11.5px] text-ink-500">{t('me.keySavedFor')}</div>}
           {backupMsg && <div className="text-[11.5px] text-ink-500 font-display break-all">{backupMsg}</div>}
+
+          <div className="flex flex-col gap-1.5 pt-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] font-display text-ink-700">{t('me.durabilityLabel')}</span>
+              {(['safe', 'fast'] as const).map((mode) => {
+                const active = (status.durability ?? 'safe') === mode
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => { void window.cumora?.localServer?.setDurability?.(mode) }}
+                    disabled={busy || status.backingUp}
+                    className={`h-7 px-3 rounded-[7px] text-[11.5px] font-display transition-colors disabled:opacity-50 ${
+                      active ? 'bg-skype text-white' : 'bg-paper text-ink-600 hover:bg-ink-100'
+                    }`}
+                    style={active ? undefined : { border: '1px solid var(--ink-100)' }}
+                  >
+                    {mode === 'safe' ? t('me.durabilitySafe') : t('me.durabilityFast')}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="text-[11px] text-ink-400 leading-snug">{t('me.durabilityHint')}</div>
+          </div>
         </div>
       </div>
     </Section>
