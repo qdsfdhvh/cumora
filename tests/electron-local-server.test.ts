@@ -33,6 +33,7 @@ let dir: string
 let localServer: LocalServerLike
 let isBackupDue: (state: { auto?: string; lastAt?: string | null } | undefined, nowMs: number) => boolean
 let backupsToDelete: (names: string[], keep: number) => string[]
+let listenerPids: (port: number) => number[]
 
 const moduleAny = Module as unknown as {
   _load: (request: string, parent: unknown, isMain: boolean) => unknown
@@ -56,6 +57,7 @@ before(() => {
   localServer = mod.localServer as LocalServerLike
   isBackupDue = mod.isBackupDue
   backupsToDelete = mod.backupsToDelete
+  listenerPids = mod.listenerPids
 })
 
 after(() => {
@@ -146,4 +148,21 @@ test('status() reports the backup schedule (off by default)', () => {
   assert.equal(b.auto, 'off')
   assert.ok(b.keep >= 1)
   assert.equal(b.lastAt, null)
+})
+
+test('listenerPids finds the process LISTENing on a port (not its clients)', async () => {
+  // The restart path depends on this: a server this instance did not fork has
+  // to be found through the port, or a saved config silently never takes effect.
+  const { createServer } = await import('node:http')
+  const server = createServer((_req, res) => res.end('ok'))
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  const port = (server.address() as { port: number }).port
+  try {
+    const pids = listenerPids(port)
+    assert.ok(pids.includes(process.pid), `expected our pid in ${JSON.stringify(pids)}`)
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()))
+  }
+  // A port nobody listens on has no owner.
+  assert.deepEqual(listenerPids(port), [])
 })

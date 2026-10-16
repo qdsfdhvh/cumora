@@ -1167,6 +1167,7 @@ export const en = {
   'me.backupLast': 'Last backup {when} · {size} · {dir}',
   'me.backupNever': 'No automatic backup yet — the folder is <data>/backups.',
   'me.backupLastError': 'last attempt failed: {error}',
+  'me.llmDirtyHint': 'Unsaved changes — save and restart first, then test: 测试连接 checks the config the server is running, not what is typed here.',
   'me.durabilityLabel': 'Write durability',
   'me.durabilitySafe': 'Safe',
   'me.durabilityFast': 'Fast',

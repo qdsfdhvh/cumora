@@ -122,6 +122,14 @@ export function ModelServicePanel({
     }
   }
 
+  // 测试连接 runs against the SAVED config (that is the config the server is
+  // running). Testing an unsaved edit and reading its answer as "the server is
+  // broken" is exactly the confusion this hint exists to prevent.
+  const dirty = baseUrl !== (llm?.baseUrl ?? '')
+    || model !== (llm?.model ?? '')
+    || support !== (llm?.modelSupport ?? '')
+    || apiKey.trim().length > 0
+
   const field = 'h-9 px-2 rounded-[8px] border border-ink-100 bg-paper text-ink-900 placeholder:text-ink-300 text-[12.5px] focus:outline-none focus:border-sky2-300'
 
   return (
@@ -230,6 +238,7 @@ export function ModelServicePanel({
           {testing ? t('me.llmTesting') : t('me.llmTest')}
         </button>
       </div>
+      {dirty && <div className="text-[11px] leading-snug text-gold-deep">{t('me.llmDirtyHint')}</div>}
       {msg && <div className="text-[11.5px] text-ink-500">{msg}</div>}
       {testMsg && <div className="text-[11.5px] text-ink-500 break-words">{testMsg}</div>}
     </div>

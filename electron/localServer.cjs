@@ -25,7 +25,7 @@ const path = require('node:path')
 const fs = require('node:fs')
 const http = require('node:http')
 const crypto = require('node:crypto')
-const { spawn } = require('node:child_process')
+const { spawn, spawnSync } = require('node:child_process')
 
 const SERVER_PORT = 5181
 const HEALTH_PATH = '/api/health'
@@ -159,6 +159,20 @@ function writeBackupState(next) {
   fs.writeFileSync(backupStatePath(), JSON.stringify(next, null, 2))
 }
 
+/**
+ * Fingerprint of the settings that only take effect at boot (the model service,
+ * durability, the key). Stamped onto the forked server as CUMORA_CONFIG_REV and
+ * echoed on /api/health, so the app can tell whether a running server was
+ * started with the configuration it would use now.
+ */
+function configRevision() {
+  const envFile = readEnvFile()
+  const parts = ENV_FILE_KEYS
+    .filter((k) => k !== 'AGENT_RUNTIME_SECRET')
+    .map((k) => `${k}=${envFile[k] ?? ''}`)
+  return crypto.createHash('sha1').update(parts.join('\n')).digest('hex').slice(0, 16)
+}
+
 function ensureRuntimeSecret() {
   const existing = readEnvFile().AGENT_RUNTIME_SECRET
   if (existing && existing.length >= 32) return existing
@@ -176,7 +190,26 @@ function devCommandHint() {
   return 'npm run server:dev'
 }
 
-function probeHealth(timeoutMs = 1500) {
+/**
+ * PIDs LISTENING on a port (never clients — `-sTCP:LISTEN`), via lsof, which
+ * every macOS ships. Used to make sure a restart is not defeated by a server
+ * this instance did not fork: one can outlive a hard-killed app, and
+ * `backupTo()` stops and starts the server as well.
+ */
+function listenerPids(port) {
+  for (const bin of ['/usr/sbin/lsof', 'lsof']) {
+    const out = spawnSync(bin, ['-ti', `tcp:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' })
+    if (out.error) continue
+    return String(out.stdout ?? '')
+      .split('\n')
+      .map((line) => Number(line.trim()))
+      .filter((pid) => Number.isInteger(pid) && pid > 0)
+  }
+  return []
+}
+
+/** Resolves the health payload (`{ok, rev}`) when a server answers, else null. */
+function probeHealthBody(timeoutMs = 1500) {
   return new Promise((resolve) => {
     const req = http.get(
       { host: '127.0.0.1', port: SERVER_PORT, path: HEALTH_PATH, timeout: timeoutMs },
@@ -184,13 +217,23 @@ function probeHealth(timeoutMs = 1500) {
         let body = ''
         res.on('data', (chunk) => { body += chunk })
         res.on('end', () => {
-          resolve(res.statusCode === 200 && body.includes('"ok":true'))
+          if (res.statusCode !== 200 || !body.includes('"ok":true')) return resolve(null)
+          try {
+            resolve(JSON.parse(body))
+          } catch {
+            // Older builds answer with plain ok — no revision to compare.
+            resolve({ ok: true, rev: null })
+          }
         })
       },
     )
-    req.on('timeout', () => { req.destroy(); resolve(false) })
-    req.on('error', () => resolve(false))
+    req.on('timeout', () => { req.destroy(); resolve(null) })
+    req.on('error', () => resolve(null))
   })
+}
+
+function probeHealth(timeoutMs = 1500) {
+  return probeHealthBody(timeoutMs).then((body) => body !== null)
 }
 
 class LocalServer {
@@ -266,6 +309,9 @@ class LocalServer {
       // http://localhost:5180 in dev — both must pass CORS.
       CUMORA_CORS_ORIGINS: 'app://cumora,http://localhost:5180,http://127.0.0.1:5180',
       AGENT_RUNTIME_SECRET: ensureRuntimeSecret(),
+      // See configRevision(): the server echoes this so a restart is skipped
+      // only when the running process really has the current settings.
+      CUMORA_CONFIG_REV: configRevision(),
     }
     fs.mkdirSync(path.join(dir, 'logs'), { recursive: true })
     const envFile = readEnvFile()
@@ -293,9 +339,7 @@ class LocalServer {
     this.emit()
     const wasRunning = this.state === 'ready'
     try {
-      this.stop()
-      // Give launchd/Node a beat to release the data directory.
-      await new Promise((resolve) => setTimeout(resolve, 800))
+      await this.#stopAndWait()
       const result = await new Promise((resolve) => {
         // Archive exactly what a restore needs. `zip` (present on macOS) takes
         // several roots in one pass and, unlike `ditto`, does not add
@@ -379,20 +423,33 @@ class LocalServer {
   }
 
   /** Start (or adopt) the local server. Resolves once it is healthy. */
-  start() {
+  start({ adopt = true } = {}) {
     if (this.startPromise) return this.startPromise
-    this.startPromise = this.#startInner().finally(() => { this.startPromise = null })
+    this.startPromise = this.#startInner(adopt).finally(() => { this.startPromise = null })
     return this.startPromise
   }
 
-  async #startInner() {
+  async #startInner(adopt = true) {
     // Fast path: something healthy already listens (a previous instance that
-    // outlived the app, or the dev server started by electron:dev).
-    if (await probeHealth()) {
-      this.state = 'ready'
-      this.detail = app.isPackaged ? 'already running' : `external (${devCommandHint()})`
-      this.emit()
-      return
+    // outlived the app, or the dev server started by electron:dev). Only taken
+    // when the caller allows adoption AND that server carries the current
+    // configuration: adopting one started with older settings made a saved
+    // change look like it did nothing (every server-side call kept going to the
+    // previous endpoint).
+    if (adopt) {
+      const running = await probeHealthBody()
+      // Dev keeps adopting whatever is on the port — that server is started by
+      // hand (`npm run server:dev`) and killing it would be hostile.
+      if (running !== null && (!app.isPackaged || running.rev === configRevision())) {
+        this.state = 'ready'
+        this.detail = app.isPackaged ? 'already running' : `external (${devCommandHint()})`
+        this.emit()
+        return
+      }
+      if (running !== null && app.isPackaged) {
+        this.pushLog(`[local-server] a server is already running with different settings (rev ${running.rev ?? 'unknown'}) — replacing it\n`)
+        await this.#stopAndWait()
+      }
     }
 
     this.state = 'starting'
@@ -511,38 +568,63 @@ class LocalServer {
   }
 
   /**
-   * Stop and wait for the old process to really be gone before starting the
-   * next one. A flat sleep here was a bug: PGlite releases its data directory
-   * as the child tears down, so starting the replacement too early made it die
-   * on a locked database — the owner saw "local server did not become healthy
-   * in time" with nothing to act on.
+   * Restart so the next process reads the current config.
+   *
+   * Adoption is NOT allowed here. `#startInner`'s fast path ("something healthy
+   * already listens → adopt it") is right when the app is starting up, and
+   * wrong when the whole point is to replace the server: if the old process had
+   * not finished dying, the replacement was skipped and the saved config stayed
+   * unread while the app reported "already running". That is exactly how a
+   * DeepSeek setting could be saved and still have every call go to
+   * api.openai.com.
    */
   async restart() {
     await this.#stopAndWait()
-    return this.start()
+    return this.start({ adopt: false })
   }
 
-  /** SIGTERM the child, then resolve once it exited (or the deadline passed). */
+  /**
+   * Stop the local server and wait until it is really gone (bounded).
+   *
+   * A flat sleep here was a bug (PGlite releases its data directory as the child
+   * tears down, so starting the replacement too early made it die on a locked
+   * database). Assuming `this.child` is the server was a second one: a server
+   * can outlive the app that forked it, and `backupTo()` stops and starts it
+   * too, so the process answering on the port is not always ours. Whatever
+   * listens on our port is killed — this app is the only thing that uses it.
+   */
   async #stopAndWait(timeoutMs = 10000) {
     const child = this.child
     this.child = null
     this.state = 'stopped'
-    if (!child || child.exitCode !== null || child.signalCode !== null) return
-    await new Promise((resolve) => {
-      let settled = false
-      const done = () => {
-        if (settled) return
-        settled = true
-        resolve()
+    if (child && child.exitCode === null && child.signalCode === null) {
+      await new Promise((resolve) => {
+        let settled = false
+        const done = () => {
+          if (settled) return
+          settled = true
+          resolve()
+        }
+        child.once('exit', done)
+        try {
+          child.kill()
+        } catch {
+          done()
+        }
+        setTimeout(done, timeoutMs)
+      })
+    }
+    const strays = listenerPids(SERVER_PORT).filter((pid) => pid !== process.pid)
+    if (strays.length > 0) {
+      this.pushLog(`[local-server] stopping a server this instance did not fork (pid ${strays.join(', ')})\n`)
+      for (const pid of strays) {
+        try { process.kill(pid, 'SIGTERM') } catch { /* already gone */ }
       }
-      child.once('exit', done)
-      try {
-        child.kill()
-      } catch {
-        done()
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline && await probeHealth(500).catch(() => false)) {
+        await new Promise((r) => setTimeout(r, 250))
       }
-      setTimeout(done, timeoutMs)
-    })
+    }
     // The port and the database directory are released slightly after exit.
     await new Promise((r) => setTimeout(r, 300))
   }
@@ -559,4 +641,4 @@ class LocalServer {
 
 const localServer = new LocalServer()
 
-module.exports = { localServer, SERVER_PORT, isBackupDue, backupsToDelete }
+module.exports = { localServer, SERVER_PORT, isBackupDue, backupsToDelete, listenerPids }
