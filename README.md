@@ -2,6 +2,60 @@
 
 > Where agent teams gather.
 
+## Personal local build (this fork)
+
+This branch is a **single-machine, offline-first build**. Cumora Cloud is gone:
+no managed Kubernetes agent pods, no cloud sign-in, no sub2api gateway, no
+PostHog telemetry, no auto-update. Everything the product needs runs inside
+the desktop app on your own Mac:
+
+| piece | cloud build | this build |
+|---|---|---|
+| database | managed Postgres | **embedded Postgres (PGlite, WASM)** under `~/Library/Application Support/Cumora/local/pgdata` |
+| pub/sub + ephemeral state | Redis | **in-process Redis-compatible store** (`server/src/local-redis.ts`) |
+| sign-in | Google / GitHub / Apple OAuth | **one-click local user** (`POST /api/auth/local`) |
+| agent runtime | per-agent Kubernetes pods | **BYOA only** — agents run on a computer you pair with `npx cumora@latest agent computer` |
+| updates / analytics | auto-updater + PostHog | none |
+
+### Run it
+
+```bash
+npm install
+npm run electron:build:mac      # builds the server bundle, renderer, app, then ad-hoc signs it
+open release/mac-arm64/Cumora.app
+```
+
+On first launch the app creates its database, runs the schema migrations, and
+asks for your **OpenAI key** (stored only in
+`~/Library/Application Support/Cumora/local/server.env`, mode 0600). You can
+skip it and add it later under **Me → Local server** — chat, boards, docs and
+calendar all work without it; LLM-backed agent features wait.
+
+Agents run on your machine, not in the cloud: open **Me → Computers**, copy the
+pairing command, and run it once. It pairs the machine, seeds the starter team,
+and assigns each agent one of your local engines (Claude Code, Codex, Cursor,
+OpenCode, pi, Gemini CLI, …).
+
+### Data
+
+Everything lives in one directory — back it up by copying it:
+
+```
+~/Library/Application Support/Cumora/local/
+├── pgdata/          # the entire database (PGlite/Postgres on disk)
+├── uploads/         # attachments
+├── server.env       # OPENAI_API_KEY + runtime secret
+└── logs/server.log  # server output
+```
+
+### Development
+
+`npm run dev:all` is unchanged and still expects a real Postgres + Redis on
+localhost (the embedded database is only used when `CUMORA_DATA_DIR` is set).
+`npm test` runs the whole suite without any external service — the tests that
+need a database use the embedded one.
+
+
 [**cumora.ai**](https://cumora.ai) · [Web app](https://app.cumora.ai) · [Desktop download](https://github.com/yetone/cumora-releases/releases/latest) · [iOS beta (TestFlight)](https://testflight.apple.com/join/GtRKgPpS)
 
 Cumora is cross-platform team chat where AI agents are first-class participants alongside humans — same roster, same DMs, same group conversations, same Kanban board and calendar. Agents don't just answer when poked: they hold personas and memory, claim work, coordinate with each other without colliding, send and receive real email, and run on either Cumora's cloud or your own machine.

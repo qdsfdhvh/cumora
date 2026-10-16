@@ -75,77 +75,40 @@ interface CumoraBridge {
     /** Main window subscribes — fires when notif window asks to focus a convo. */
     onFocusConvo: (handler: (conversationId: string) => void) => () => void
   }
-  /** OAuth loopback bridge. Main process opens the user's system
-   *  browser via openExternal(); after the provider chain, our local
-   *  loopback HTTP server (port 47823) catches the redirect, the
-   *  served HTML page POSTs the parsed fragment to /auth/token, and
-   *  onToken fires here so AuthGate can plant the session. */
-  auth?: {
-    openExternal: (url: string) => Promise<boolean>
-    /** Arm a single-use handoff nonce (anti session-fixation). Returns the
-     *  nonce to thread through the OAuth return URL. */
-    arm?: () => Promise<string>
-    onToken: (handler: (payload: { token: string; companyId: string | null }) => void) => () => void
-  }
   /** Appearance preference → Electron `nativeTheme.themeSource` so
    *  `prefers-color-scheme` in the renderer matches the user's pick. */
   theme?: {
     set: (source: 'system' | 'light' | 'dark') => void
   }
-  /** Auto-update bridge — ported from alma's pattern. Surfaces
-   *  electron-updater status to the renderer so the React side can
-   *  render the upgrade UI without polling. Unavailable in browser /
-   *  PWA mode (only present when `cumora.isElectron`). */
-  update?: {
-    getAppInfo: () => Promise<AppUpdateInfo>
-    getStatus: () => Promise<AutoUpdateStatus>
-    getInfo: () => Promise<UpdateReleasePayload | null>
-    check: () => Promise<ManualUpdateResult>
-    download: () => Promise<{ ok: boolean; error?: string }>
-    install: () => Promise<{ ok: boolean }>
-    onStatus: (handler: (payload: AutoUpdateStatus) => void) => () => void
+  /**
+   * Local server bridge (personal build). The packaged app forks its own
+   * bundled API server + in-process Postgres; the renderer reads readiness
+   * from here, writes the OpenAI key on first run, and can restart the
+   * server or reveal its data directory.
+   */
+  localServer?: {
+    status: () => Promise<LocalServerStatus>
+    setOpenAIKey: (key: string) => Promise<LocalServerStatus>
+    restart: () => Promise<LocalServerStatus>
+    openDataDir: () => Promise<boolean>
+    onStatus: (handler: (status: LocalServerStatus) => void) => () => void
   }
 }
 
-/** Status broadcast on every state change. `idle` is the initial value;
- *  `unsupported` means the running build can't auto-update at all
- *  (PWA, ad-hoc dev, packaged without a feed). */
-export type AutoUpdateKind =
-  | 'idle' | 'checking' | 'update-available' | 'update-not-available'
-  | 'downloading' | 'update-downloaded' | 'error' | 'unsupported'
-
-export interface AutoUpdateStatus {
-  status: AutoUpdateKind
-  version?: string
-  detail?: string
-  percent?: number
-  transferred?: number
-  total?: number
-  bytesPerSecond?: number
-  /** True if the manual "Check for updates" button kicked this off. UI
-   *  uses this to decide whether to surface a "no update" toast (don't
-   *  bother for background checks). */
-  triggeredByUser?: boolean
-}
-
-export type ManualUpdateResult =
-  | { status: 'unsupported'; message?: string }
-  | { status: 'update-available'; version?: string }
-  | { status: 'update-downloaded'; version?: string }
-  | { status: 'update-not-available' }
-  | { status: 'error'; message?: string }
-
-export interface AppUpdateInfo {
-  name: string
-  version: string
-  autoUpdateSupported: boolean
-  autoUpdateStatus: AutoUpdateStatus
-}
-
-export interface UpdateReleasePayload {
-  version: string
-  releaseNotes: string | null
-  releaseDate: string
+/** Snapshot of the embedded server + database the desktop app runs.
+ *  `state` is 'stopped' before boot, 'starting' while the database opens and
+ *  migrations run, 'ready' once /api/health answers, 'error' on failure. */
+export interface LocalServerStatus {
+  state: 'stopped' | 'starting' | 'ready' | 'error'
+  detail: string
+  port: number
+  /** False until the user enters an OpenAI key on first run. */
+  hasApiKey: boolean
+  /** On-disk directory holding the database, uploads, and server.env. */
+  dataDir: string
+  isDev: boolean
+  /** Recent server log lines, oldest first. */
+  log: string[]
 }
 
 declare global {
@@ -161,13 +124,7 @@ export const isElectron: boolean = typeof window !== 'undefined' && window.cumor
  *  we skip the full chat shell and only surface sign-in, waitlist, and a
  *  desktop hand-off. The `?webonly=1` escape exists so localhost dev can
  *  preview the trimmed shell without /etc/hosts trickery. */
-export const isWebAppHost: boolean = (() => {
-  if (typeof window === 'undefined') return false
-  if (isElectron) return false
-  if (/^app\./i.test(window.location.hostname)) return true
-  if (window.location.search.includes('webonly=1')) return true
-  return false
-})()
+export const isWebAppHost: boolean = false
 
 export const platform: string = (typeof window !== 'undefined' && window.cumora?.platform) || (typeof navigator !== 'undefined' ? navigator.platform.toLowerCase() : 'web')
 

@@ -1,32 +1,18 @@
-import IORedis from 'ioredis'
-import { env } from './env.js'
+import { LocalRedisClient } from './local-redis.js'
 
-// When the agent runtime is in http mode (pod talking to a remote
-// server), Redis is never used from this process — every pub/sub flows
-// through /runtime/* on the server side. Connect lazily so the bundle
-// doesn't spam ECONNREFUSED logs in pods that don't have a Redis
-// nearby. In server mode the first publish/subscribe wakes it up
-// instantly.
-const lazyConnect = process.env.CUMORA_RUNTIME_CLIENT === 'http'
+/**
+ * Personal build: the cloud build's external Redis is replaced by an
+ * in-process, Redis-compatible store (see ./local-redis.js). Same client
+ * surface the codebase has always used; a server restart drops the
+ * ephemeral state exactly like the unpersisted Redis deployment did —
+ * durable state lives in Postgres either way.
+ */
 
 /** Single shared client for normal commands. */
-export const redis = new IORedis(env.REDIS_URL, {
-  // Durable writes must never hang forever after PostgreSQL COMMIT while a
-  // disconnected Redis client quietly accumulates an offline queue. Callers
-  // can now fail-open or retry explicitly within a bounded deadline.
-  maxRetriesPerRequest: 1,
-  enableOfflineQueue: false,
-  commandTimeout: 2_000,
-  enableReadyCheck: true,
-  lazyConnect,
-})
+export const redis = new LocalRedisClient()
 
 /** Separate connection for blocking SUBSCRIBE — required by the Redis protocol. */
-export const sub = new IORedis(env.REDIS_URL, {
-  maxRetriesPerRequest: null,
-  enableReadyCheck: true,
-  lazyConnect,
-})
+export const sub = new LocalRedisClient()
 
 redis.on('error', (e) => console.error('[redis]', e))
 sub.on('error', (e) => console.error('[redis sub]', e))

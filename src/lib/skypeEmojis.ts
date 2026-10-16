@@ -209,9 +209,13 @@ export function skypeEmojiUrl(key: string): string {
  *
  *  A missing file still degrades quietly: `Audio.play()` rejects and the
  *  picker / message renderer never errors visibly. */
+// Personal build: sound files are NOT fetched from a cloud CDN. The local
+// build ships no Skype audio (Microsoft IP — see above), so this resolves to
+// a same-origin path that simply 404s and `playSkypeSound` degrades quietly.
+// Point VITE_SKYPE_SOUNDS_BASE at your own host to enable sounds.
 const SKYPE_SOUNDS_BASE: string =
   (import.meta.env?.VITE_SKYPE_SOUNDS_BASE as string | undefined)?.replace(/\/+$/, '')
-  || 'https://cdn.cumora.ai/skype-sounds'
+  || '/skype-sounds'
 
 export function skypeSoundUrl(key: string): string {
   return `${SKYPE_SOUNDS_BASE}/${key}.mp3`

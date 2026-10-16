@@ -37,21 +37,23 @@
     "guard:migration-locks": "node scripts/guard-migration-locks.mjs",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
-    "test": "node --import tsx --test \"server/src/__tests__/**/*.test.ts\" \"tests/**/*.test.ts\" \"workers/**/*.test.ts\"",
+    "test": "node --import tsx --test \"server/src/__tests__/**/*.test.ts\" \"tests/**/*.test.ts\"",
     "test:integration": "node server/run-integration-tests.mjs",
     "migrate": "tsx server/src/migrate-bin.ts",
     "icons": "python3 scripts-make-mac-icon.py && npx -y electron-icon-builder -i build/icon.png -o build --flatten && node scripts-sync-electron-dev-icon.mjs",
     "electron:dev": "npm run migrate && concurrently -k -n web,api,electron -c blue,magenta,cyan \"npm:dev\" \"npm:server:dev\" \"wait-on tcp:5180 tcp:5181 && cross-env-shell ELECTRON_RENDERER_URL=http://localhost:5180 electron .\"",
     "electron:start": "electron .",
     "electron:build": "npm run build && electron-builder",
-    "electron:build:mac": "npm run build && electron-builder --mac",
+    "electron:build:mac": "npm run build:local && electron-builder --mac dir --arm64 && codesign --force --sign - --entitlements build/entitlements.mac.plist \"release/mac-arm64/Cumora.app\"",
     "electron:build:win": "npm run build && electron-builder --win",
     "electron:build:linux": "npm run build && electron-builder --linux",
     "mobile:sync": "npm run build && npx cap sync",
     "mobile:ios": "npm run mobile:sync && npx cap open ios",
     "mobile:ios:run": "npm run mobile:sync && npx cap run ios",
     "mobile:android": "npm run mobile:sync && npx cap open android",
-    "mobile:android:run": "npm run mobile:sync && npx cap run android"
+    "mobile:android:run": "npm run mobile:sync && npx cap run android",
+    "build:server": "node scripts/build-server-bundle.mjs",
+    "build:local": "npm run build:server && npm run build"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1045.0",
@@ -67,6 +69,7 @@
     "@capacitor/push-notifications": "^8.1.1",
     "@capacitor/splash-screen": "^8.0.0",
     "@capacitor/status-bar": "^8.0.0",
+    "@electric-sql/pglite": "0.5.10",
     "@tiptap/core": "3.23.4",
     "@tiptap/extension-collaboration": "3.23.4",
     "@tiptap/extension-collaboration-caret": "3.23.4",
@@ -85,7 +88,6 @@
     "compression": "^1.8.1",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
-    "electron-updater": "^6.8.3",
     "emoji-regex": "^10.6.0",
     "express": "^5.2.1",
     "framer-motion": "^11.11.17",
@@ -95,7 +97,6 @@
     "lib0": "^0.2.117",
     "openai": "^6.37.0",
     "pg": "^8.20.0",
-    "posthog-js": "^1.373.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
@@ -125,6 +126,7 @@
     "drizzle-kit": "^0.31.10",
     "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.0",
     "js-yaml": "^4.1.1",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
@@ -149,27 +151,13 @@
       "electron/**/*",
       "build/icon.png",
       "build/tray-template*.png",
-      "package.json"
+      "package.json",
+      "!node_modules/**/*"
     ],
     "directories": {
       "output": "release",
       "buildResources": "build"
     },
-    "publish": [
-      {
-        "provider": "generic",
-        "url": "https://updates.cumora.ai",
-        "channel": "latest",
-        "useMultipleRangeRequest": false
-      },
-      {
-        "provider": "github",
-        "owner": "yetone",
-        "repo": "cumora-releases",
-        "releaseType": "release",
-        "publishAutoUpdate": true
-      }
-    ],
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icons/icon.icns",
@@ -177,19 +165,12 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": true,
+      "identity": null,
+      "notarize": false,
       "target": [
         {
-          "target": "dmg",
+          "target": "dir",
           "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64",
             "arm64"
           ]
         }
@@ -227,6 +208,12 @@
       "category": "Network",
       "icon": "build/icon.png",
       "maintainer": "yetone <yetoneful@gmail.com>"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "build/local-dist",
+        "to": "local-dist"
+      }
+    ]
   }
 }

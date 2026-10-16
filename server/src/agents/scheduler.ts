@@ -1,30 +1,18 @@
 /**
  * Wake scheduler — listens to CH_MESSAGE_NEW (Redis pubsub) and
- * routes wake events to the right agent's pod.
+ * routes wake events to each agent's runtime.
  *
- * Model (pod-only):
- *   1. Try deliverWake() — push SSE event to the agent's on-bus Pod
- *   2. If 0 subscribers, the Pod is `resting`. ensurePod() spins one
- *      up; the Pod, after SSE attach, runs drain() unconditionally
- *      to catch up the inbox (so we don't need to queue the wake
- *      server-side — the missed event self-heals through the
- *      inbox-read).
- *
- * Per-agent serialization is intrinsic — each agent has exactly one
- * Pod, which runs one turn at a time and collapses concurrent wakes
- * into pendingRerun internally (see runtime/pod-agent.ts).
- *
- * Idle teardown is handled by the Pod itself: after
- * CUMORA_AGENT_IDLE_MS without a wake, it sets the agent's status to
- * `resting` and exits, leaving the PVC bound for next time. The
- * server doesn't track Pod lifetimes — the next wake re-creates the
- * Pod via the orchestrator.
+ * Personal build model (BYOA-only): the managed Kubernetes pod path
+ * was removed with Cumora Cloud. Every agent runs on a user-paired
+ * computer daemon (`cumora agent computer`); a wake is an SSE push to
+ * that daemon's connected control stream. When the daemon is offline
+ * the wake stays durable in the inbox and self-heals on reconnect via
+ * the daemon's drain().
  */
 import { pool } from '../db/pool.js'
 import { env } from '../env.js'
 import { CH_MESSAGE_NEW, CH_POLLS, CH_TYPING, publish, redis, sub, type MessageNewEvent, type PollUpdatedEvent } from '../redis.js'
 import { notifyAlert } from '../alerting.js'
-import { ensurePod } from './runtime/orchestrator.js'
 import {
   resolveAgentHost,
   isByoaKind,
@@ -590,86 +578,14 @@ async function wakeOne(
   // and that scan is never offered again.
   const durableWithoutDelivery = reason === 'message.new'
 
-  // BYOA agents run on a user-paired Computer (the `cumora agent computer`
-  // daemon), never a server-managed pod. If delivered === 0 the daemon
+  // Every agent in the personal build runs on a user-paired Computer
+  // (the `cumora agent computer` daemon). If delivered === 0 the daemon
   // simply isn't subscribed right now (host offline / asleep) — there's
-  // nothing to spin up. Skip the pod path entirely; do NOT ensurePod /
-  // wake-retry kubectl.
-  if (isByoaKind(host.kind)) {
-    console.log(`[scheduler] ${agentId} is BYOA (${host.kind}); daemon offline — ${
-      durableWithoutDelivery ? 'wake deferred to reconnect' : `${reason} wake not delivered`}`)
-    return durableWithoutDelivery
-  }
-
-  // Free tier is BYOA-only: it must NEVER spin a managed Cumora Cloud pod. A free
-  // agent only runs when its own paired daemon is connected (delivered>0, handled
-  // above) or reconnects (isByoaKind, handled above). Reaching here for a free
-  // company means the agent is unassigned/managed with no live daemon — defer, do
-  // NOT ensurePod. Previously this was ungated ("grandfathered free on cloud"),
-  // which silently ran thousands of free agents on managed cloud — a real cost
-  // leak; the polluted legacy data (cloud computers + managed engines) was cleaned
-  // up separately. The wake stays durable in the inbox for whenever they pair.
-  if (host.tier === 'free') {
-    console.log(`[scheduler] ${agentId} is free-tier (BYOA-only); no managed pod — ${
-      durableWithoutDelivery ? 'wake deferred until paired' : `${reason} wake not delivered`}`)
-    return durableWithoutDelivery
-  }
-
-  // Paid (pro/max) managed agent — spin up a Pod. The Pod will catch up on first
-  // connect via its initial drain(); we don't need to deliver the
-  // event explicitly afterwards because the inbox IS the source of
-  // truth.
-  const r = await ensurePod(agentId)
-  if (r.created) {
-    console.log(`[scheduler] ${agentId} resting → spinning up pod (${reason})`)
-    // A successful kubectl apply does not guarantee the pod will ever
-    // reach the runtime wake stream: kubelet can reject allocation
-    // immediately after scheduling (for example a transient unhealthy
-    // devic.es/fuse device). The call below defaults failureClass to
-    // `ensure_pod`, and that class is queued only for `manual` wakes.
-    // For `message.new` it is a no-op. The durable inbox is the recovery
-    // path, and replaying the wake can duplicate a turn. The inline replay
-    // loop further down is also skipped for `message.new`, so a durable
-    // wake whose new pod never attaches is not retried here.
-    await scheduleWakeRetry(agentId, reason, conversationId, steerPayload, options, Math.max(1, retryAttempt + 1), 'post-spawn health check')
-  } else if (!r.ok) {
-    console.error(`[scheduler] ${agentId} ensurePod failed: ${r.reason}`)
-    await scheduleWakeRetry(
-      agentId,
-      reason,
-      conversationId,
-      steerPayload,
-      options,
-      retryAttempt + 1,
-      r.reason,
-      r.code === 'placement_lookup_failed' ? 'host_resolution' : 'ensure_pod',
-    )
-    return false
-  } else if (r.reason === 'already pending' || r.reason === 'already running') {
-    await scheduleWakeRetry(agentId, reason, conversationId, steerPayload, options, retryAttempt + 1, r.reason)
-  }
-
-  // Message wakes are durable because the message is already in the inbox,
-  // and the pod's cold-start drain reads that source of truth. Synthetic
-  // idle/background wakes have no inbox row, so replay the wake briefly after
-  // the pod is created until its SSE stream attaches.
-  if (reason !== 'message.new') {
-    const deadline = Date.now() + 20_000
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 500))
-      const replayed = await deliverWake(agentId, wakePayload).catch(() => 0)
-      if (replayed > 0) {
-        // Confirmed: the pod attached and took this wake. The health-check
-        // retry was the net for "it never attached" — drop it before it
-        // delivers the same brief again.
-        await _cancelWakeRetry(agentId, reason, conversationId)
-        return true
-      }
-    }
-    console.warn(`[scheduler] ${agentId} synthetic wake (${reason}) was not delivered after pod start`)
-    return false
-  }
-  return true
+  // nothing to spin up. The wake stays durable in the inbox; on
+  // reconnect the daemon's drain() catches up on everything it missed.
+  console.log(`[scheduler] ${agentId} (${host.kind}); daemon offline — ${
+    durableWithoutDelivery ? 'wake deferred to reconnect' : `${reason} wake not delivered`}`)
+  return durableWithoutDelivery
 }
 
 /** Multi-instance dedup: every cumora-server replica subscribes to
@@ -1182,7 +1098,7 @@ export function startScheduler(): void {
   })
   startWakeRetryWorker()
   startRoutingClaimSweeperIfEnabled()
-  console.log(`[scheduler] mailbox scheduler listening on ${CH_MESSAGE_NEW}, ${CH_POLLS} · runtime=pod-only`)
+  console.log(`[scheduler] mailbox scheduler listening on ${CH_MESSAGE_NEW}, ${CH_POLLS} · runtime=byoa`)
 }
 
 // ─── poll author wake (real-time vote watching) ──────────────────────

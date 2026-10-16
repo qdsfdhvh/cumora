@@ -172,12 +172,11 @@ export async function findReferencedStorageKeys(keys: string[], client?: PoolCli
 
 class CleanupDeferred extends Error {}
 
-async function defaultDeleteAgentRuntime(agentId: string): Promise<void> {
-  if (!env.WORKSPACE_RUNTIME_CLEANUP_ENABLED) {
-    throw new CleanupDeferred('workspace runtime cleanup is disabled')
-  }
-  const { deletePod, deleteChromeProfilePvc } = await import('./agents/runtime/orchestrator.js')
-  await Promise.all([deletePod(agentId), deleteChromeProfilePvc(agentId)])
+async function defaultDeleteAgentRuntime(_agentId: string): Promise<void> {
+  // Personal build: the pod runtime is gone — there is no server-managed
+  // runtime state to reclaim for an off-boarded agent (its BYOA daemon
+  // owns its own files). Storage cleanup above still applies.
+  throw new CleanupDeferred('no server-managed runtime in the personal build')
 }
 
 async function performCleanup(job: CleanupJob, dependencies: WorkspaceCleanupDependencies): Promise<void> {

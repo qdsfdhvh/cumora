@@ -23,7 +23,7 @@
  *   4. RUNNABLE_ENGINE_IDS carries it           src/lib/engines.ts
  *   5. a version spec                           computer/cli-version.ts
  *   6. `byoa-<id>` in the shared source list    runtime/byoa-source.ts
- *   7. `byoa-<id>` in every ledger union        llm-ledger, observability, admin/api, api/client
+ *   7. `byoa-<id>` in every ledger union        llm-ledger, observability, api/client
  *   8. the engine's binary is spawn-guarded     scripts/guard-big-brain.mjs
  *
  * A guard that quietly stops checking is worse than no guard, so every anchor
@@ -141,13 +141,6 @@ const CHECKS = [
     body: (s) => extract(s, /export type TriageSource = ([^\n]*)/),
     needle: (id) => `'byoa-${id}'`,
     fix: "widen TriageSource with 'byoa-<id>'",
-  },
-  {
-    file: 'src/admin/api.ts',
-    what: 'the admin LlmCallSource union',
-    body: (s) => extract(s, /export type LlmCallSource = ([^\n]*)/),
-    needle: (id) => `'byoa-${id}'`,
-    fix: "widen LlmCallSource with 'byoa-<id>'",
   },
   {
     file: 'src/api/client.ts',

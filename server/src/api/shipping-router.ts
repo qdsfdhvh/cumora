@@ -654,6 +654,13 @@ export function createShippingRouter(deps: ShippingRouterDeps): Router {
 
   router.post('/features/:id/releases/:releaseId/action', async (req, res) => {
     const base = await deps.requireCompany(req)
+    // Resolve the privilege check BEFORE opening the write transaction —
+    // it reads through the request pool, and the embedded single-session
+    // database serializes transactions, so a pool read inside the open
+    // transaction would deadlock.
+    const privileged = ['approve', 'rollback'].includes(text(req.body?.action, 40))
+      ? await deps.requireCompanyRole(req)
+      : null
     const feature = await requireFeature(pool, base.companyId, req.params.id)
     const client = await pool.connect()
     try {
@@ -668,8 +675,7 @@ export function createShippingRouter(deps: ShippingRouterDeps): Router {
       throw new ShippingError(400, 'invalid release action')
     }
     let actor = base.userId
-    if (action === 'approve' || action === 'rollback') {
-      const privileged = await deps.requireCompanyRole(req)
+    if (privileged) {
       actor = privileged.userId
     }
     if (action === 'approve') {

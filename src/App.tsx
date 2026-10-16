@@ -18,30 +18,13 @@ import { AuthGate } from '@/components/AuthGate'
 import { NotificationToasts } from '@/components/NotificationToasts'
 import { NotificationWindow } from '@/components/NotificationWindow'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
-import { isNotificationWindow, isWebAppHost } from '@/lib/runtime'
-import { WebShell } from '@/web/WebShell'
+import { isNotificationWindow } from '@/lib/runtime'
 import {
   InviteAcceptScreen, consumeInviteFromUrl,
   getPendingInvite, clearPendingInvite,
 } from '@/components/InviteAcceptScreen'
-import { UpdateBanner, UpdaterDialog } from '@/components/UpdaterDialog'
-import { AdminApp } from '@/admin/AdminApp'
-import { WaitlistConfirmedScreen, consumeWaitlistFragment } from '@/admin/WaitlistConfirmedScreen'
-import { SuspendedScreen, consumeSuspendedFragment } from '@/admin/SuspendedScreen'
 import { NoWorkspaceScreen } from '@/components/NoWorkspaceScreen'
 import { WorkspaceSessionBridge } from '@/components/WorkspaceSessionBridge'
-import '@/admin/admin.css'
-
-/** True iff this browser tab is for the admin panel. On prod the
- *  hostname is admin.cumora.ai; in localhost dev the path prefix
- *  `/admin` triggers it. We check both so a dev can hit
- *  http://localhost:5180/admin/ without DNS work. */
-function isAdminContext(): boolean {
-  if (typeof location === 'undefined') return false
-  if (location.hostname.startsWith('admin.')) return true
-  if (location.pathname.startsWith('/admin')) return true
-  return false
-}
 
 function AuthedApp() {
   const isMobile = useIsMobile()
@@ -72,7 +55,6 @@ function AuthedApp() {
   const selectedConvoExists = useConversations((s) =>
     convoId ? s.list.some((c) => c.id === convoId) : false,
   )
-  const [updaterOpen, setUpdaterOpen] = useState(false)
   // Dev shortcut to preview the onboarding screen on demand (⌘/Ctrl+Shift+O),
   // regardless of tier/computer state. Toggle again to exit. The preview also
   // auto-clears once a NEW computer pairs while you're previewing, so you can
@@ -173,15 +155,6 @@ function AuthedApp() {
     if (view === 'whispers') useWhispers.getState().loadList()
   }, [view])
 
-  // Cross-component "open updater" channel — MeView's "Check for
-  // updates" button posts this event to ask AuthedApp to open the
-  // dialog without prop-drilling.
-  useEffect(() => {
-    const onOpen = () => setUpdaterOpen(true)
-    window.addEventListener('cumora:open-updater', onOpen)
-    return () => window.removeEventListener('cumora:open-updater', onOpen)
-  }, [])
-
   return (
     <>
       {(needsOnboarding || forceOnboarding) ? <Onboarding /> : (isMobile ? <MobileApp /> : <DesktopApp />)}
@@ -189,8 +162,6 @@ function AuthedApp() {
           rendered at the AuthedApp level so they share auth context and
           unmount cleanly on sign-out. */}
       <NotificationToasts />
-      <UpdateBanner onOpen={() => setUpdaterOpen(true)} />
-      <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
     </>
   )
 }
@@ -209,20 +180,6 @@ export function App() {
 }
 
 function MainApp() {
-  // Waitlist landing — handleCallback redirects here with `#waitlist=1`
-  // when a brand-new OAuth visitor hit the gate. Consume the fragment
-  // once so refresh doesn't pin them on this screen forever. State is
-  // read-only — the screen's dismiss button calls location.reload() to
-  // fall back into the normal flow.
-  const [waitlist] = useState<{ email: string | null } | null>(() => consumeWaitlistFragment())
-  // Suspension landing — handleCallback redirects here with
-  // `#suspended=1&email=...&reason=...` when a returning user whose
-  // account is currently suspended finishes OAuth. Same consume-once
-  // semantics as the waitlist screen.
-  const [suspended] = useState<{ email: string | null; reason: string | null } | null>(
-    () => consumeSuspendedFragment(),
-  )
-
   // Force AuthedApp to remount when the user logs in/out OR switches between
   // companies — every store keys off the active tenant, so a clean remount is
   // the simplest way to reload all data without stale rows leaking across.
@@ -248,27 +205,6 @@ function MainApp() {
     return getPendingInvite()
   })
 
-  if (waitlist) {
-    return <WaitlistConfirmedScreen email={waitlist.email} />
-  }
-
-  if (suspended) {
-    return <SuspendedScreen email={suspended.email} reason={suspended.reason} />
-  }
-
-  // Admin panel runs in its own shell — different sidebar, different
-  // routes, no chat stores. It still goes through AuthGate so the user
-  // signs in via the same OAuth flow before reaching it.
-  if (isAdminContext()) {
-    return (
-      <AuthGate>
-        <ErrorBoundary>
-          <AdminApp />
-        </ErrorBoundary>
-      </AuthGate>
-    )
-  }
-
   if (inviteToken) {
     const screen = (
       <InviteAcceptScreen
@@ -280,18 +216,6 @@ function MainApp() {
       <AuthGate unauthFallback={screen}>
         {screen}
       </AuthGate>
-    )
-  }
-
-  // Public web client (app.cumora.ai) — Cumora ships only as a desktop
-  // app; the web surface is intentionally limited to OAuth sign-in, the
-  // waitlist verdict (handled above), and a cumora:// hand-off. The full
-  // chat shell below is reserved for Electron.
-  if (isWebAppHost) {
-    return (
-      <ErrorBoundary>
-        <WebShell />
-      </ErrorBoundary>
     )
   }
 

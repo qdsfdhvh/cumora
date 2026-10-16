@@ -14,17 +14,6 @@ test('application startup verifies schema compatibility and imports no migrator'
   assert.doesNotMatch(source, /ensureSchema/)
 })
 
-test('application Pod manifests contain no per-replica migration container', async () => {
-  for (const path of [
-    'server/k8s/cumora-server.gke.yaml',
-    'server/k8s/cumora-server.orbstack.yaml',
-  ]) {
-    const manifest = await readRepo(path)
-    assert.doesNotMatch(manifest, /^\s*- name: migrate\s*$/m, `${path} must not run DDL per replica`)
-    assert.doesNotMatch(manifest, /command:\s*\["npm",\s*"run",\s*"migrate"\]/)
-  }
-})
-
 test('production deploy delegates one guarded transaction to the recovery runner', async () => {
   const workflow = await readRepo('.github/workflows/deploy.yml')
   assert.match(workflow, /scripts\/deploy-release\.mjs run/)

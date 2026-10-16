@@ -39,20 +39,14 @@ import {
   audit, createWsTicket, gravatarUrlForEmail,
 } from '../auth.js'
 import { joinAllHands, onboardStarterAgents, seedMemberDms } from '../onboardCompany.js'
-import {
-  type Provider, providerEnabled, createState, consumeState, isWebOAuthProvider, WEB_OAUTH_PROVIDERS,
-  authorizeUrl, handleCallback, errorUrl, publicSignInError, returnUrlAllowed,
-} from '../oauth.js'
-import { adminRouter } from './admin-router.js'
-import { isWaitlistEnabled } from '../admin.js'
 import { ogPreview, OgError } from '../og.js'
 import { sendInvitationEmail, type InvitationEmailDelivery } from '../invitation-email.js'
-import { getUserQuota, sub2apiConfigured } from '../sub2api.js'
+import { signInLocal } from '../local-auth.js'
 import {
-  ensureCloudComputer, issuePairingCode, pairComputer, announceComputerOnline,
+  issuePairingCode, pairComputer, announceComputerOnline,
   resolveDevice, mintAgentRuntimeToken, listAgentsForComputer,
   listComputers, revokeComputer, assignAgentToComputer, heartbeatComputer,
-  cloudComputerId, issueRepairCode, requestEngineDetect, reportDetectedEngines,
+  issueRepairCode, requestEngineDetect, reportDetectedEngines,
   setComputerDefaultEngine, updateEngineDefaults, getEngineDefaults,
   rotateCompanyPairingCode, PAIRABLE_ENGINES, type EngineId,
 } from '../agents/computer/registry.js'
@@ -726,25 +720,12 @@ api.get('/og', async (req, res) => {
   }
 })
 
-/* GET /api/public/signup-config — unauthenticated read of the bits of
- * app_settings that govern what the marketing page (cumora.ai) should
- * offer brand-new visitors. Today that's just `waitlist_enabled`: when
- * true, the landing page hides the desktop download buttons and shows
- * a "Join Waitlist" CTA instead, so visitors don't install an app they
- * can't yet sign into.
- *
- * Always sends `Access-Control-Allow-Origin: *` because the consumer is
- * a static site on a different host than this API, and the response
- * contains no per-user data. */
+/* GET /api/public/signup-config — legacy cloud marketing endpoint. The
+ * personal build has no waitlist; always reports disabled. */
 api.get('/public/signup-config', async (_req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Cache-Control', 'public, max-age=30')
-  try {
-    const waitlistEnabled = await isWaitlistEnabled()
-    res.json({ waitlist_enabled: waitlistEnabled })
-  } catch {
-    res.json({ waitlist_enabled: false })
-  }
+  res.json({ waitlist_enabled: false })
 })
 
 /* GET /api/metrics — Prometheus text exposition for the email + agent
@@ -781,135 +762,37 @@ api.get('/metrics', async (req, res) => {
   res.send(renderProm())
 })
 
-/* ============== Auth — OAuth only (Google + GitHub) ============== */
-
-/** 302 to the provider's consent screen. State is opaque to the client —
- *  we mint it server-side, save to Redis (5min TTL), and verify on the
- *  callback to defend against CSRF + cross-provider mixups.
+/* ============== Auth — local single-user (personal build) ==============
  *
- *  `?return=<url>` is the post-callback redirect target. Must startsWith
- *  one of CUMORA_AUTH_RETURN_ALLOWLIST entries; otherwise rejected so we
- *  can't be turned into an open redirect. Omit to use AUTH_DONE_URL. */
-/** Which browser sign-in providers this deployment actually has credentials
- *  for. The sign-in screens use it to avoid offering a button that can only
- *  503 — GitLab is opt-in (and points at whichever instance the operator
- *  configured), so most deployments will not have it. */
+ * The cloud build federated sign-in through Google / GitHub / GitLab /
+ * Apple OAuth. This personal build runs entirely on the user's machine
+ * (embedded PGlite database, no cloud services), so there is nothing to
+ * federate against. The desktop app calls POST /api/auth/local once at
+ * startup; signInLocal find-or-creates the machine's single local user
+ * and mints an ordinary session through the same createSession path the
+ * OAuth callbacks used. */
+
 api.get('/auth/providers', safe(async (_req, res) => {
-  res.json({ providers: [...WEB_OAUTH_PROVIDERS].filter((p) => providerEnabled(p as Provider)) })
+  res.json({ providers: [], local: true })
 }))
 
-api.get('/auth/start/:provider', safe(async (req, res) => {
-  const provider = req.params.provider as Provider
-  if (!isWebOAuthProvider(provider)) {
-    res.status(404).json({ error: 'unknown provider' }); return
-  }
-  if (!providerEnabled(provider)) {
-    res.status(503).json({ error: `${provider} oauth not configured` }); return
-  }
-  const returnUrlRaw = typeof req.query.return === 'string' ? req.query.return : ''
-  let returnUrl: string | null = null
-  if (returnUrlRaw) {
-    if (!returnUrlAllowed(returnUrlRaw)) {
-      res.status(400).json({ error: 'return URL not allowed' }); return
-    }
-    returnUrl = returnUrlRaw
-  }
-  // The invite-onboarding flow sends `?invite=<token>` when sign-in
-  // started from /invite/<token>. completeFlow uses this to skip
-  // auto-creating a personal workspace for net-new users.
-  const inviteRaw = typeof req.query.invite === 'string' ? req.query.invite : ''
-  const inviteToken = inviteRaw && inviteRaw.length >= 8 && inviteRaw.length <= 200 ? inviteRaw : null
-  const state = await createState(provider, returnUrl, inviteToken)
-  res.redirect(authorizeUrl(provider, state))
-}))
-
-/** Provider redirects here after consent. We trade the auth code for a
- *  session and 302 to the saved return URL (or AUTH_DONE_URL default) with
- *  `#token=...&companyId=...` on the fragment (never in the query / log).
- *  On failure we 302 to the same target with `#error=...`. */
-api.get('/auth/callback/:provider', safe(async (req, res) => {
-  const provider = req.params.provider as Provider
-  if (!isWebOAuthProvider(provider)) {
-    res.status(404).json({ error: 'unknown provider' }); return
-  }
-  const code = typeof req.query.code === 'string' ? req.query.code : ''
-  const state = typeof req.query.state === 'string' ? req.query.state : ''
-  if (!code || !state) {
-    res.redirect(errorUrl(null, 'missing_code_or_state')); return
-  }
+api.post('/auth/local', safe(async (req, res) => {
+  const displayName = typeof req.body?.displayName === 'string' ? req.body.displayName : null
   const ip = req.socket.remoteAddress ?? null
-  const ua = (req.headers['user-agent'] as string | undefined) ?? null
-  // `claimed` is read in the catch block below, so it has to be declared
-  // outside the try — consumeState() itself can throw (e.g. a Redis
-  // hiccup) and previously did so *before* this try started, escaping to
-  // the router's generic unhandled-error page instead of the same
-  // graceful #error= redirect every other failure in this flow gets.
-  let claimed: Awaited<ReturnType<typeof consumeState>> = null
+  const ua = req.headers['user-agent'] as string | undefined ?? null
   try {
-    claimed = await consumeState(state)
-    if (!claimed || claimed.provider !== provider) {
-      res.redirect(errorUrl(null, 'bad_state')); return
-    }
-    const url = await handleCallback({
-      provider, code, returnUrl: claimed.returnUrl, ip, userAgent: ua,
-      inviteToken: claimed.inviteToken,
-    })
-    res.redirect(url)
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    console.warn(`[auth] ${provider} callback failed:`, msg)
-    await audit({ kind: 'login_failed', ip, userAgent: ua, detail: { provider, error: msg } })
-    // The redirect carries only what we WROTE for the user to read. Everything
-    // else — a Postgres transaction error, a provider's raw token-endpoint
-    // body, a DNS failure — becomes a fixed code. The full text is already on
-    // the line above and in the audit row, so nothing is lost for diagnosis;
-    // what changes is that it stops being rendered on the sign-in screen and
-    // parked in the browser's address bar and history (#102).
-    res.redirect(errorUrl(claimed?.returnUrl ?? null, publicSignInError(e).slice(0, 120)))
-  }
-}))
-
-/** Native Sign in with Apple — the iOS app finished the
- *  ASAuthorization flow on-device and POSTs the resulting
- *  `identity_token` here. We verify the JWT, find-or-create, and
- *  return the session token as JSON (no browser redirect). */
-api.post('/auth/apple/native', safe(async (req, res) => {
-  const { handleAppleNativeSignIn, WaitlistedError, SuspendedError } = await import('../oauth.js')
-  const body = (req.body ?? {}) as {
-    identityToken?: unknown; name?: unknown; inviteToken?: unknown
-  }
-  const identityToken = typeof body.identityToken === 'string' ? body.identityToken : ''
-  if (!identityToken) { res.status(400).json({ error: 'identityToken required' }); return }
-  const fallbackName = typeof body.name === 'string' ? body.name : null
-  const inviteToken = typeof body.inviteToken === 'string' ? body.inviteToken : null
-  const ip = req.socket.remoteAddress ?? null
-  const ua = (req.headers['user-agent'] as string | undefined) ?? null
-  try {
-    const r = await handleAppleNativeSignIn({
-      identityToken,
-      fallbackName,
-      // Only our bundle id is accepted. If we later ship an Android
-      // app or web SIWA fallback they'll get distinct audiences.
-      audiences: ['io.cumora.app'],
-      inviteToken,
-      ip, userAgent: ua,
-    })
+    const r = await signInLocal({ displayName, ip, userAgent: ua })
     res.json({
       token: r.token,
-      user: { id: r.userId, email: r.email, displayName: r.displayName },
+      user: { id: r.user.id, email: r.user.email, displayName: r.user.displayName },
       companyId: r.companyId,
     })
   } catch (e) {
-    if (e instanceof WaitlistedError) { res.status(403).json({ error: 'waitlisted', email: e.email }); return }
-    if (e instanceof SuspendedError) { res.status(403).json({ error: 'suspended', email: e.email, reason: e.reason }); return }
     const msg = e instanceof Error ? e.message : String(e)
-    console.warn('[auth] apple native sign-in failed:', msg)
-    // Same rule as the browser callback: the app shows this string to the
-    // user, so it must be one we wrote.
-    res.status(400).json({ error: publicSignInError(e) })
+    console.error('[auth] local sign-in failed:', msg)
+    res.status(500).json({ error: 'local sign-in failed' })
   }
 }))
-
 api.post('/auth/logout', safe(async (req, res) => {
   const auth = req.headers.authorization
   let token: string | undefined
@@ -1062,35 +945,15 @@ api.get('/auth/me', safe(async (req, res) => {
   })
 }))
 
-// Admin panel. The sub-router enforces requireAdmin on every route; we
-// mount it here so the shared authMiddleware runs first.
-api.use('/admin', adminRouter)
+// (The cloud build mounted an operator admin console here — removed in
+// the personal build.)
 
-
-/* ============== /me/quota — sub2api subscription snapshot ===========
- * Surfaces the same daily/weekly/monthly used + limit numbers that
- * sub2api enforces at the gateway. Returns `{ configured: false }` when
- * the deployment doesn't talk to sub2api, and `{ configured: true,
- * snapshot: null }` when the user exists in cumora but was never
- * provisioned (or sub2api lost their subscription). Either case is fine
+/* ============== /me/quota — usage snapshot ===========
+ * The cloud build proxied a per-user sub2api gateway quota here. The
+ * personal build has no gateway and no quotas — always unconfigured.
  * — the client shows an "unavailable" affordance rather than erroring. */
-api.get('/me/quota', safe(async (req, res) => {
-  const me = requireAuth(req)
-  if (!sub2apiConfigured()) { res.json({ configured: false, snapshot: null }); return }
-  const { rows } = await pool.query<{ sub2api_user_id: number | null }>(
-    `SELECT sub2api_user_id FROM users WHERE id = $1`, [me],
-  )
-  const subId = rows[0]?.sub2api_user_id ?? null
-  if (subId == null) { res.json({ configured: true, snapshot: null }); return }
-  try {
-    const snapshot = await getUserQuota(subId)
-    res.json({ configured: true, snapshot })
-  } catch (e) {
-    // Network / sub2api glitches mustn't 500 the settings tab — the user
-    // can retry by reopening it.
-    console.warn('[me/quota] sub2api fetch failed', e)
-    res.json({ configured: true, snapshot: null, error: 'sub2api unreachable' })
-  }
+api.get('/me/quota', safe(async (_req, res) => {
+  res.json({ configured: false, snapshot: null })
 }))
 
 /* ============== /me legacy stub — now session-derived ============== */
@@ -1153,17 +1016,9 @@ api.post('/companies', async (req, res) => {
          ON CONFLICT (id, company_id) DO NOTHING`,
         [me, displayName, displayName.charAt(0).toUpperCase(), gravatarUrl, id],
       )
-      // Paid companies get a built-in managed "Cumora Cloud" computer their
-      // starters run on. Free tier is BYOA-only: NO managed cloud computer
-      // (the UI shows a locked "Cumora Cloud (Pro)" upsell instead) and its
-      // starters are deferred until the first computer is paired
-      // (POST /api/computers/pair). Best-effort.
-      try {
-        if ((await companyTier(id)) !== 'free') {
-          await ensureCloudComputer(id)
-          await onboardStarterAgents(id, { computerId: cloudComputerId(id), engine: 'managed' })
-        }
-      } catch (e) { console.warn('[companies] cloud/starter setup failed', e) }
+      // Personal build: no managed cloud computer exists. Starter agents
+      // are seeded when the user pairs their own machine
+      // (POST /api/computers/pair) — the BYOA onboarding path.
 
       try { await joinAllHands({ companyId: id, participantId: me }) }
       catch (e) { console.warn('[companies] join all-hands failed', e) }
@@ -1242,16 +1097,11 @@ function readProviderProfile(value: unknown): string | null {
   if (!isProviderProfileId(value)) throw new HttpError(400, 'invalid provider profile id')
   return value
 }
-// Assign an agent to a computer (move between Cumora Cloud and a paired
-// machine), choosing its engine (owner/admin).
+// Assign an agent to a paired computer, choosing its engine (owner/admin).
 api.post('/agents/:id/computer', safe(async (req, res) => {
   const { companyId } = await requireCompanyRole(req)
   const computerId = String(req.body?.computerId ?? '').trim()
   if (!computerId) throw new HttpError(400, 'computerId required')
-  // Free tier is BYOA-only — it can't put agents on the managed Cumora Cloud.
-  if (computerId === cloudComputerId(companyId) && (await companyTier(companyId)) === 'free') {
-    throw new HttpError(403, 'Free tier agents run on your own computer. Upgrade to Pro to use Cumora Cloud.')
-  }
   const engine = typeof req.body?.engine === 'string' ? req.body.engine : undefined
   const inherit = req.body?.inherit === true
   const modelPins = readAgentBody(req.body ?? {})
@@ -3174,15 +3024,8 @@ api.delete('/agents/:id', async (req, res) => {
   )
   const { invalidatePersonaCache } = await import('../agents/personas.js')
   invalidatePersonaCache(id)
-  // Reclaim the agent's chrome-profile PVC. Off-board is the agent's
-  // terminal state — its pod is silenced for good and any future
-  // re-spawn (via /rehire) gets a fresh profile anyway, since 30+
-  // days of cookies / login state are usually stale by then. Fire-
-  // and-forget so a slow kubectl call doesn't stall the response;
-  // the helper is idempotent so a re-off-board (race) is harmless.
-  void import('../agents/runtime/orchestrator.js').then(({ deleteChromeProfilePvc }) =>
-    deleteChromeProfilePvc(id),
-  ).catch((e) => console.warn(`[off-board] chrome-PVC delete failed for ${id}:`, e instanceof Error ? e.message : String(e)))
+  // (Cloud build reclaimed the agent's chrome-profile PVC via kubectl here —
+  // removed with the pod runtime.)
   res.json({ ok: true, departedAt: new Date().toISOString() })
 })
 

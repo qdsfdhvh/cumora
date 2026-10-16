@@ -9,10 +9,14 @@
  */
 import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-// Same pattern as computer-engine-redetect.test.ts: pin the HTTP runtime
-// client and mock the pool, so no Redis or Postgres is needed.
-process.env.CUMORA_RUNTIME_CLIENT = 'http'
+// The aggregate-shape case below executes real SQL. Point the pool at the
+// embedded PGlite database so it runs without an external Postgres — same
+// engine, same semantics, no service to start.
+process.env.CUMORA_DATA_DIR = mkdtempSync(join(tmpdir(), 'cumora-obs-test-'))
 process.env.OPENAI_API_KEY ??= 'test-key'
 
 const { getWakeEconomics, getTurnsPerMessage } = await import('../agents/observability.js')
@@ -131,7 +135,7 @@ test('sinceHours is clamped to the same window the rest of the panel uses', asyn
   assert.equal(captured[1], 720 * 3_600_000)
 })
 
-test('the aggregate counts zero-turn messages — against a real Postgres', async () => {
+test('the aggregate counts zero-turn messages — against the embedded database', async () => {
   // The other cases here mock pool.query and so only cover the JS mapping. This
   // one executes the aggregate shape itself, because the defect it guards was
   // invisible to a mock: `avg(t.turns)` after a LEFT JOIN skips the NULL rows,

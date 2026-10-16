@@ -70,3 +70,6 @@ vite.config.d.ts
 server/k8s/*.prod.yaml
 docs/HANDOFF.md
 android/app/google-services.json
+
+# Packaged server bundle + staged embedded database (build output)
+build/local-dist/

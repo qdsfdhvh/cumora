@@ -1,27 +1,14 @@
 /**
  * OpenAI client factory — every server-side LLM call goes through here.
  *
- * Routing rules (tenant-aware):
- *
- *   1. If sub2api is configured AND we can resolve the tenant's owner
- *      → that owner's sub2api_api_key → OpenAI client pointed at the
- *      sub2api OpenAI-compatible base. Per-user quotas enforced.
- *
- *   2. Else (sub2api unconfigured, or new tenant without a provisioned
- *      key yet) → legacy single `env.OPENAI_API_KEY` client pointed at
- *      OpenAI directly. No quotas — same behavior as pre-sub2api.
- *
- * Callers pass `tenant` (= company_id). When `tenant` is null (e.g.
- * platform-wide tasks like the avatar regen of a seeded agent before
- * any workspace exists) we always use the legacy path.
+ * Personal build: the cloud sub2api per-user LLM gateway is gone. Every
+ * call uses the operator's own `env.OPENAI_API_KEY` (optionally rerouted
+ * per-model to Novita / OrcaRouter by the provider-prefix wrapper below).
+ * The `tenant` argument is kept for call-site compatibility.
  *
  * Per-tenant client cache: OpenAI client construction is cheap but we
  * call this on every LLM hop. Cache by tenant; invalidate explicitly
- * (e.g. tier change handler) via `invalidateLlmClient(tenant)`.
- *
- * Critical: failures resolving the sub2api key are NEVER fatal — we
- * fall back to the legacy client. A wedged sub2api lookup must not
- * take down agent turns.
+ * via `invalidateLlmClient(tenant)`.
  *
  * Provider routing (model-based, on top of the above): whichever client is
  * chosen by the tenant rules is wrapped by `withProviderRouting` before it's
@@ -45,7 +32,6 @@ import { pool } from './db/pool.js'
 import { env } from './env.js'
 import { isNovitaModel, novitaResponsesShim } from './novita.js'
 import { isOrcaRouterModel, orcarouterResponsesCreate } from './orcarouter.js'
-import { sub2apiConfigured, sub2apiOpenAIBaseURL } from './sub2api.js'
 
 interface CachedClient {
   client: OpenAI
@@ -152,48 +138,17 @@ function withProviderRouting(client: OpenAI): OpenAI {
   })
 }
 
-/** Build (and cache) the OpenAI client for this tenant. Async because
- *  resolving the tenant's owner_user_id + sub2api_api_key is a DB hop.
- *  Always returns a working client — never throws on lookup failure. */
+/** Build (and cache) the OpenAI client for this tenant. Always returns a
+ *  working client — the operator's own key. */
 export async function getLlmClient(tenant: string | null): Promise<OpenAI> {
   if (testLlmOverride) return testLlmOverride(tenant)
-  // No tenant context → legacy.
-  if (!tenant || !sub2apiConfigured()) return withProviderRouting(legacyClient())
-
-  const cached = cache.get(tenant)
+  const cached = tenant ? cache.get(tenant) : undefined
   if (cached && Date.now() - cached.mintedAt < CACHE_TTL_MS) {
     return withProviderRouting(cached.client)
   }
-
-  try {
-    const { rows } = await pool.query<{ sub2api_api_key: string | null }>(
-      `SELECT u.sub2api_api_key
-         FROM companies c
-         JOIN users u ON u.id = c.owner_user_id
-        WHERE c.id = $1`,
-      [tenant],
-    )
-    const apiKey = rows[0]?.sub2api_api_key
-    if (!apiKey) {
-      // Tenant exists but owner hasn't been provisioned in sub2api yet.
-      // Cache the legacy fallback briefly so we don't re-query on every
-      // hop, but with a short TTL so the next backfill picks up quickly.
-      const c = legacyClient()
-      cache.set(tenant, { client: c, key: 'legacy', mintedAt: Date.now() })
-      return withProviderRouting(c)
-    }
-    const c = new OpenAI({
-      apiKey,
-      baseURL: sub2apiOpenAIBaseURL(),
-      maxRetries: SDK_MAX_RETRIES,
-      timeout: SDK_TIMEOUT_MS,
-    })
-    cache.set(tenant, { client: c, key: apiKey, mintedAt: Date.now() })
-    return withProviderRouting(c)
-  } catch (e) {
-    console.warn(`[llm] tenant ${tenant} client lookup failed; legacy fallback`, e instanceof Error ? e.message : e)
-    return withProviderRouting(legacyClient())
-  }
+  const c = legacyClient()
+  if (tenant) cache.set(tenant, { client: c, key: 'local', mintedAt: Date.now() })
+  return withProviderRouting(c)
 }
 
 /** Drop a tenant's cached client. Call from tier-change handlers so the

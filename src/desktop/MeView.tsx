@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { LocalServerStatus } from '@/lib/runtime'
 import { useParticipants } from '@/stores/participants'
 import { useComputers } from '@/stores/computers'
 import { usePrefs } from '@/stores/preferences'
@@ -158,45 +159,97 @@ function CommunitySection() {
   )
 }
 
-/** Cumora version + auto-update entry point. Renders only when the
- *  Electron bridge is available (PWA / web builds have no updater).
- *  Click "Check for updates" → opens the UpdaterDialog mounted at the
- *  AuthedApp level via a custom window event (avoids prop-drilling
- *  through three layers of view components). */
+/** Local server + OpenAI key — the personal build's settings surface.
+ *  Renders only in Electron (the browser PWA has no server to manage). */
 function AboutSection() {
   const t = useT()
-  const [version, setVersion] = useState<string | null>(null)
-  const [supported, setSupported] = useState<boolean>(false)
+  const [status, setStatus] = useState<LocalServerStatus | null>(null)
+  const [keyInput, setKeyInput] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    const bridge = typeof window !== 'undefined' ? window.cumora?.update : undefined
+    const bridge = window.cumora?.localServer
     if (!bridge) return
-    void bridge.getAppInfo().then((info) => {
-      setVersion(info.version)
-      setSupported(info.autoUpdateSupported)
-    }).catch(() => { /* swallow — section just hides */ })
+    const off = bridge.onStatus(setStatus)
+    void bridge.status().then(setStatus).catch(() => { /* server not up */ })
+    return off
   }, [])
 
-  if (!version) return null
+  if (!status) return null
+
+  async function saveKey() {
+    const bridge = window.cumora?.localServer
+    if (!bridge || !keyInput.trim()) return
+    setBusy(true)
+    try {
+      setStatus(await bridge.setOpenAIKey(keyInput.trim()))
+      setKeyInput('')
+      setSaved(true)
+      setTimeout(() => setSaved(false), 3000)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
-    <Section title={t('me.sectionAbout')}>
-      <div className="bg-cloud rounded-[14px] p-5 flex items-center justify-between gap-4"
+    <Section title={t('me.sectionLocalServer')}>
+      <div className="bg-cloud rounded-[14px] p-5 flex flex-col gap-4"
         style={{ border: '1px solid var(--ink-100)' }}>
-        <div className="min-w-0">
-          <div className="font-display text-[14px] text-ink-800">{t('me.versionLine', { version })}</div>
-          <div className="font-display italic text-[12px] text-ink-400 mt-0.5">
-            {supported ? t('me.autoUpdateDaily') : t('me.autoUpdateUnsupported')}
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="font-display text-[14px] text-ink-800">
+              {t('me.localServerRunning', { state: status.state })}
+            </div>
+            <div className="font-display italic text-[12px] text-ink-400 mt-0.5">
+              {t('me.localServerDetail')}
+            </div>
+            <div className="text-[11px] text-ink-400 mt-1 break-all">
+              {t('me.dataDirLabel')}: {status.dataDir}
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={() => { void window.cumora?.localServer?.openDataDir() }}
+            className="shrink-0 h-9 px-3 rounded-[8px] text-[12.5px] font-display bg-paper text-ink-700 hover:bg-ink-100 transition-colors"
+          >
+            {t('me.openDataDir')}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => window.dispatchEvent(new CustomEvent('cumora:open-updater'))}
-          className="shrink-0 h-9 px-4 rounded-[8px] text-[13px] font-display transition-colors text-white"
-          style={{ background: 'var(--skype)' }}
-        >
-          {t('me.checkUpdates')}
-        </button>
+
+        <div className="flex flex-col gap-2">
+          <div className="text-[12px] font-display text-ink-700">{t('me.openaiKeyLabel')}</div>
+          <div className={`text-[11.5px] ${status.hasApiKey ? 'text-ink-400' : 'text-coral-500'}`}>
+            {status.hasApiKey ? t('me.openaiKeySet') : t('me.openaiKeyMissing')}
+          </div>
+          <div className="flex items-stretch gap-2">
+            <input
+              type="password"
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+              placeholder="sk-…"
+              spellCheck={false}
+              autoComplete="off"
+              className="flex-1 h-9 px-2 rounded-[8px] border border-ink-100 bg-paper text-ink-900 placeholder:text-ink-300 text-[12.5px] focus:outline-none focus:border-sky2-300"
+            />
+            <button
+              type="button"
+              disabled={busy || !keyInput.trim()}
+              onClick={saveKey}
+              className="h-9 px-3 rounded-[8px] bg-skype hover:bg-skype-deep text-white text-[12.5px] disabled:opacity-40"
+            >
+              {t('me.saveKey')}
+            </button>
+            <button
+              type="button"
+              onClick={() => { void window.cumora?.localServer?.restart() }}
+              className="h-9 px-3 rounded-[8px] bg-paper text-ink-700 hover:bg-ink-100 text-[12.5px]"
+            >
+              {t('me.restartServer')}
+            </button>
+          </div>
+          {saved && <div className="text-[11.5px] text-ink-500">{t('me.keySavedFor')}</div>}
+        </div>
       </div>
     </Section>
   )

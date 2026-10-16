@@ -34,7 +34,11 @@ export const env = {
   NODE_ENV: process.env.NODE_ENV ?? 'development',
   DATABASE_URL: required('DATABASE_URL', `postgres://${process.env.USER ?? 'postgres'}@localhost:5432/cumora`),
   REDIS_URL: required('REDIS_URL', 'redis://localhost:6379'),
-  OPENAI_API_KEY: required('OPENAI_API_KEY'),
+  // Personal build: no longer hard-required at boot. The desktop app
+  // collects the key in its first-run screen and restarts the server with
+  // it. Until then, server-side LLM features fail with a clear error and
+  // everything else (chat, boards, docs, calendar) works.
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
   /**
    * "Brain" model — the agent's main reasoning loop and convene speech.
    * Default model used when an agent's `participants.model` is NULL.
@@ -196,53 +200,6 @@ export const env = {
    */
   AGENT_RUNTIME_SECRET: process.env.AGENT_RUNTIME_SECRET ?? DEV_AGENT_RUNTIME_SECRET,
   /**
-   * Full URL the agent-runner pod uses to reach the cumora server's
-   * `/runtime` API (note the trailing path). From OrbStack K8s a pod
-   * talks to the host via `host.docker.internal`. Override in prod
-   * with the in-cluster service URL — typically something like
-   * `http://cumora-server.default.svc.cluster.local:5181/runtime`.
-   */
-  AGENT_RUNTIME_SERVER_URL: process.env.AGENT_RUNTIME_SERVER_URL ?? `http://host.docker.internal:${process.env.PORT ?? 5181}/runtime`,
-  /**
-   * Per-agent pod idle timeout. After this many ms with no wake
-   * events, the Pod sets the agent's status to `resting`, gracefully
-   * shuts down, and the K8s Pod is gone. The PVC stays so the next
-   * wake re-uses the same workspace.
-   *
-   * Default 3 minutes — was 10 min before the FUSE-cap incident on
-   * 2026-05-20, when post-crashloop-recovery thundering-herd spawned
-   * hundreds of idle pods that each held a /dev/fuse slot for 10 min
-   * each, blowing past the cluster's 50-slot cap. 3 min still
-   * absorbs bouncy conversation cold-starts (each pod cold-start is
-   * ~5s with PVC bound) and lets fuse slots recycle 3× faster.
-   */
-  AGENT_IDLE_MS: Number(process.env.AGENT_IDLE_MS ?? 3 * 60_000),
-  /**
-   * Pod no-work-detected fast-exit timeout (ms). If a pod boots,
-   * runs its bootstrap inbox-drain, and then receives NO further
-   * SSE wake/steer event within this window, it self-exits to free
-   * the /dev/fuse slot. Distinct from AGENT_IDLE_MS, which is the
-   * "I've done work, now I've been quiet for a while" timer.
-   *
-   * Default 90s — covers crashloop-recovery scenarios where a wake
-   * fired against a resting agent, ensurePod spawned a pod, the
-   * pod's bootstrap drain handled the queued message, and then no
-   * follow-up wake arrives. Without this, the pod would sit on the
-   * FUSE slot until AGENT_IDLE_MS elapsed even though it had no
-   * pending work.
-   */
-  AGENT_NO_WORK_MS: Number(process.env.AGENT_NO_WORK_MS ?? 90_000),
-  /**
-   * App-level ceiling for concurrently active agent pods. This is
-   * intentionally separate from the generic-device-plugin's advertised
-   * /dev/fuse count: GKE can expose hundreds of logical FUSE slots per
-   * node, but CPU, memory, API-server churn, and provider concurrency
-   * are the real production ceiling. The orchestrator admits new pods
-   * against min(cluster fuse capacity, this value). Set <=0 to rely on
-   * the cluster resource only.
-   */
-  AGENT_POD_ADMISSION_MAX: Number(process.env.AGENT_POD_ADMISSION_MAX ?? 40),
-  /**
    * Max concurrent recipients the scheduler triages + wakes at once,
    * PER server replica. The wake fan-out for a group message used to be
    * an unbounded `Promise.all` over every recipient — each running a
@@ -269,6 +226,20 @@ export const env = {
    */
   KUBECTL_MAX_CONCURRENCY: Number(process.env.KUBECTL_MAX_CONCURRENCY ?? 8),
   /**
+   * Personal-build embedded mode. When CUMORA_DATA_DIR is set the server
+   * ignores DATABASE_URL/REDIS_URL and uses the in-process PGlite database
+   * + the in-process Redis-compatible bus, persisting everything under
+   * this directory. The packaged desktop app sets it; `npm run dev` leaves
+   * it unset and keeps using real Postgres/Redis.
+   */
+  DATA_DIR: process.env.CUMORA_DATA_DIR ?? '',
+  /** Uploads directory override (embedded mode stores uploads under the
+   *  app's Application Support directory instead of server/uploads). */
+  UPLOAD_DIR_OVERRIDE: process.env.CUMORA_UPLOAD_DIR ?? '',
+  /** Enable POST /api/auth/local (single-user local sign-in). The packaged
+   *  app sets this; a plain server deploy leaves it off. */
+  LOCAL_AUTH: ['1', 'true', 'yes', 'on'].includes((process.env.CUMORA_LOCAL_AUTH ?? '').toLowerCase()),
+  /**
    * Comma-separated allow-list of origins for CORS. The browser only
    * sends an Origin header for cross-origin requests, so leaving this
    * blank preserves same-origin / Vite-proxy behavior in dev. Set to
@@ -279,49 +250,9 @@ export const env = {
    */
   CORS_ORIGINS: (process.env.CUMORA_CORS_ORIGINS ?? '')
     .split(',').map((s) => s.trim()).filter(Boolean),
-  /**
-   * OAuth providers (Google + GitHub). Set the four creds below + the two
-   * URLs to enable. The callback URL must match the redirect registered with
-   * the provider; the done URL is where we 302 the browser after creating
-   * the session, with `#token=<bearer>&companyId=<id>` on the fragment so the
-   * renderer can pick it up without it landing in server access logs.
-   */
-  GOOGLE_CLIENT_ID:     process.env.GOOGLE_CLIENT_ID     ?? '',
-  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET ?? '',
-  GITHUB_CLIENT_ID:     process.env.GITHUB_CLIENT_ID     ?? '',
-  GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET ?? '',
-  GITLAB_CLIENT_ID:     process.env.GITLAB_CLIENT_ID     ?? '',
-  GITLAB_CLIENT_SECRET: process.env.GITLAB_CLIENT_SECRET ?? '',
-  /** Which GitLab to talk to. Defaults to gitlab.com; point it at a
-   *  self-managed instance (https://gitlab.example.com) to sign in against
-   *  that one instead. Whatever you set here is TRUSTED to attest its users'
-   *  email ownership — the same trust Google and GitHub get — because a
-   *  verified email is what lets sign-in link to an existing account. */
-  GITLAB_BASE_URL: (process.env.GITLAB_BASE_URL ?? 'https://gitlab.com').replace(/\/+$/, ''),
-  /** Public origin this server is reachable at. Used to construct the
-   *  per-provider redirect_uri that we hand to Google / GitHub at flow
-   *  start. Defaults to http://localhost:5181 for local dev. In prod
-   *  set CUMORA_PUBLIC_ORIGIN=https://api.cumora.ai. */
-  PUBLIC_ORIGIN: (process.env.CUMORA_PUBLIC_ORIGIN ?? 'http://localhost:5181').replace(/\/+$/, ''),
-  /** Default URL the server 302s to after a successful OAuth callback,
-   *  with `#token=...&companyId=...` appended. Used when the client
-   *  didn't pass `?return=` at flow start. For dev (Vite) point at
-   *  http://localhost:5173/; for packaged Electron the client passes
-   *  cumora://auth at start time and the server picks that. */
+  /** Fallback base for invitation-link construction (see INVITE_BASE_URL).
+   *  Kept from the cloud build; the packaged app overrides it. */
   AUTH_DONE_URL: process.env.CUMORA_AUTH_DONE_URL ?? 'http://localhost:5173/',
-  /** Allow-list of return URLs the client may pass via /auth/start
-   *  `?return=...`. Without this we'd have an open-redirect: any
-   *  attacker could craft a malicious provider-callback chain that
-   *  delivers the user's token to a foreign origin. A return URL is
-   *  accepted iff it startsWith one of these prefixes. Comma-separated.
-   *  Common values:
-   *    cumora://auth                       (packaged Electron deep link)
-   *    http://localhost:5173/              (Vite dev renderer)
-   *    http://localhost:5180/              (Electron dev renderer)
-   *    https://app.cumora.ai/              (future web client)
-   */
-  AUTH_RETURN_ALLOWLIST: (process.env.CUMORA_AUTH_RETURN_ALLOWLIST ?? '')
-    .split(',').map((s) => s.trim()).filter(Boolean),
   /** Base URL used to build the public face of company invitation links
    *  (`<base>/invite/<token>`). When unset we fall back to AUTH_DONE_URL —
    *  already prod-correct for the OAuth flow (https://app.cumora.ai on the
@@ -329,47 +260,6 @@ export const env = {
    *  cumora://invite/<token>). Set this only if the invite-acceptance flow
    *  lives on a different origin than the OAuth redirect. */
   INVITE_BASE_URL: process.env.CUMORA_INVITE_BASE_URL ?? '',
-  /**
-   * sub2api LLM quota gateway. When SUB2API_ADMIN_KEY is set, OAuth
-   * signup provisions a per-user sub2api account + API key, and every
-   * LLM client uses that user's key + the sub2api OpenAI-compatible
-   * endpoint. Without the admin key we fall back to the legacy single
-   * OPENAI_API_KEY path (no per-user quotas).
-   *
-   * Three knobs:
-   *   SUB2API_INTERNAL_URL — where THIS server reaches sub2api for
-   *                          admin calls (user create, login-as-user,
-   *                          mint key, replace-group). In-cluster:
-   *                          http://sub2api:8080.
-   *   SUB2API_PUBLIC_URL   — public domain for browser/operator access
-   *                          (https://sub2api.cumora.ai). Backend LLM
-   *                          traffic should prefer SUB2API_INTERNAL_URL
-   *                          to avoid ingress request timeouts.
-   *   SUB2API_ADMIN_KEY    — `x-api-key` header value for admin
-   *                          endpoints. Generated once in the sub2api
-   *                          dashboard at https://sub2api.cumora.ai/.
-   *
-   * Tier → sub2api group_id mapping. Numeric ids come from the
-   * dashboard after you create the three quota groups. 0 means "tier
-   * unmapped, leave user without group" — useful for staged rollout
-   * (the user has a sub2api account but can't call upstream yet).
-   */
-  SUB2API_INTERNAL_URL: (process.env.SUB2API_INTERNAL_URL ?? '').replace(/\/+$/, ''),
-  SUB2API_PUBLIC_URL:   (process.env.SUB2API_PUBLIC_URL ?? '').replace(/\/+$/, ''),
-  SUB2API_ADMIN_KEY:    process.env.SUB2API_ADMIN_KEY ?? '',
-  SUB2API_TIER_FREE_GROUP_ID: Number(process.env.SUB2API_TIER_FREE_GROUP_ID ?? 0),
-  SUB2API_TIER_PRO_GROUP_ID:  Number(process.env.SUB2API_TIER_PRO_GROUP_ID  ?? 0),
-  SUB2API_TIER_MAX_GROUP_ID:  Number(process.env.SUB2API_TIER_MAX_GROUP_ID  ?? 0),
-  /**
-   * Comma-separated allow-list of emails that are forced to `is_admin =
-   * true` on every server boot. The bootstrap path so that adding a new
-   * admin doesn't require a SQL session — just add their email here +
-   * redeploy. Removing an email from the env does NOT demote the user
-   * (we never write FALSE from this path); demotion goes through the
-   * admin panel.
-   */
-  ADMIN_EMAILS: (process.env.CUMORA_ADMIN_EMAILS ?? '')
-    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
   /**
    * Real-email feature. When all three core vars are set, agents can send
    * mail (Resend) and receive mail (Cloudflare Email Worker → /webhooks/
@@ -423,29 +313,11 @@ export const env = {
   /** Durable external-resource cleanup after workspace deletion. Set the
    * interval to 0 to leave jobs queued for a separately invoked worker. */
   WORKSPACE_CLEANUP_INTERVAL_MS: Number(process.env.WORKSPACE_CLEANUP_INTERVAL_MS ?? 60_000),
-  /** Explicitly enable Kubernetes Pod/PVC cleanup. Local and integration
-   * environments default off without relying on database-name heuristics. */
-  WORKSPACE_RUNTIME_CLEANUP_ENABLED: ['1', 'true', 'yes', 'on'].includes(
-    (process.env.WORKSPACE_RUNTIME_CLEANUP_ENABLED ?? '').toLowerCase(),
-  ),
   /** Interval between poll-expiration sweeps. Defaults to 60s. The sweep
    *  flips polls past their expiresAt to closed and broadcasts the close
    *  event. Set to 0 to disable (polls then stay open forever even after
    *  their declared expiration — manual close still works). */
   POLL_SWEEP_INTERVAL_MS: Number(process.env.POLL_SWEEP_INTERVAL_MS ?? 60_000),
-  /** Interval between chrome-profile PVC garbage-collection passes.
-   *  Each pass lists all `app=cumora-agent` PVCs, joins against
-   *  participants + agent_runs, and drops PVCs whose agent has been
-   *  off-boarded OR hasn't run in CHROME_PVC_GC_IDLE_DAYS. Default
-   *  hourly cadence — the work is sized for off-the-clock cleanup,
-   *  not real-time. Set to 0 to disable. */
-  CHROME_PVC_GC_INTERVAL_MS: Number(process.env.CHROME_PVC_GC_INTERVAL_MS ?? 60 * 60_000),
-  /** How many days an agent must be inactive before its
-   *  chrome-profile PVC is reclaimed. 30d is the sweet spot: long
-   *  enough that idle but in-use agents (weekend / vacation) don't
-   *  lose login state, short enough that abandoned agents don't
-   *  accumulate $0.10/month forever. */
-  CHROME_PVC_GC_IDLE_DAYS: Number(process.env.CHROME_PVC_GC_IDLE_DAYS ?? 30),
   /** Bearer token gating GET /api/metrics. Unset → endpoint returns 404
    *  (don't leak internal counts to unauthenticated callers in deploys
    *  that haven't set up Prometheus yet). When set, scrapers pass it as
@@ -488,7 +360,7 @@ export const env = {
 // JWT with a value anyone can read in the repo — a full agent/tenant
 // impersonation bypass. Fail closed, loudly, at startup rather than serve
 // forgeable tokens.
-if (env.NODE_ENV === 'production') {
+if (env.NODE_ENV === 'production' && !env.DATA_DIR) {
   if (env.AGENT_RUNTIME_SECRET === DEV_AGENT_RUNTIME_SECRET) {
     console.error(
       '[env] AGENT_RUNTIME_SECRET is still the dev default in production. ' +

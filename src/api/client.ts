@@ -818,17 +818,14 @@ export interface ShippingOverview {
 export const api = {
   health: () => http<{ ok: boolean; ts: number }>('/health'),
   me: () => http<{ id: string; name: string; kind: string }>('/me'),
-  /** Full-page redirect into the provider's consent screen. Use
-   *  `window.location.assign(api.authStartUrl('google'))` rather than
-   *  fetch — the browser needs to do the actual navigation so the
-   *  callback can land back on AUTH_DONE_URL with the session token. */
-  authStartUrl: (provider: 'google' | 'github' | 'gitlab', opts?: { inviteToken?: string | null; returnUrl?: string | null }) => {
-    const params = new URLSearchParams()
-    if (opts?.returnUrl) params.set('return', opts.returnUrl)
-    if (opts?.inviteToken) params.set('invite', opts.inviteToken)
-    const qs = params.toString()
-    return `${API}/auth/start/${provider}${qs ? `?${qs}` : ''}`
-  },
+  /** Personal build: single-user local sign-in. Find-or-creates the
+   *  machine's local user and returns a session token — no provider
+   *  round-trip, no network egress. */
+  authLocal: (displayName?: string | null) =>
+    http<{ token: string; user: { id: string; email: string; displayName: string }; companyId: string | null }>(
+      '/auth/local',
+      { method: 'POST', body: JSON.stringify({ displayName: displayName ?? null }) },
+    ),
   authLogout: () =>
     http<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
   /** Permanently delete the signed-in user's account. Soft-deletes
@@ -837,19 +834,6 @@ export const api = {
    *  token is invalid — caller should `useAuth.clear()` immediately. */
   deleteAccount: () =>
     http<{ ok: boolean }>('/me/account', { method: 'DELETE' }),
-  /** Native Sign in with Apple — POST the identity_token JWT obtained
-   *  from the iOS-native ASAuthorization flow. Server verifies the JWT
-   *  against Apple's JWKS, find-or-creates the user, and returns a
-   *  fresh session token. */
-  authAppleNative: (input: { identityToken: string; name?: string | null; inviteToken?: string | null }) =>
-    http<{ token: string; user: { id: string; email: string; displayName: string }; companyId: string | null }>('/auth/apple/native', {
-      method: 'POST',
-      body: JSON.stringify({
-        identityToken: input.identityToken,
-        name: input.name ?? null,
-        inviteToken: input.inviteToken ?? null,
-      }),
-    }),
   authMe: () =>
     http<MeResponse>('/auth/me'),
   /** sub2api-backed quota snapshot for the signed-in user. `configured`
@@ -1345,7 +1329,7 @@ export const api = {
     http<ApiConveneTranscript[]>(`/convene/${encodeURIComponent(sessionId)}/transcript`),
   /** Browser sign-in providers this deployment has credentials for. Used to
    *  avoid rendering a button that can only 503. */
-  authProviders: () => http<{ providers: string[] }>('/auth/providers'),
+  authProviders: () => http<{ providers: string[]; local?: boolean }>('/auth/providers'),
   getPreferences: () => http<Record<string, unknown>>('/me/preferences'),
   putPreferences: (prefs: Record<string, unknown>) =>
     http<{ ok: boolean }>('/me/preferences', { method: 'PUT', body: JSON.stringify(prefs) }),

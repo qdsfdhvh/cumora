@@ -5,7 +5,6 @@ import { useParticipants } from '@/stores/participants'
 import { IBack, IPlus, IShip } from '@/components/icons'
 import { Select } from '@/components/Select'
 import { cn } from '@/lib/utils'
-import { posthog } from '@/lib/observability'
 import { useT, type MessageKey } from '@/lib/i18n'
 
 const STATUS_LABEL_KEY: Record<ShippingFeatureStatus, MessageKey> = {
@@ -26,9 +25,9 @@ const NEXT_STATUS: Partial<Record<ShippingFeatureStatus, ShippingFeatureStatus>>
   ready: 'releasing', releasing: 'watching', watching: 'learned', learned: 'building',
 }
 
-function event(name: string, properties?: Record<string, unknown>) {
-  try { posthog.capture(name, properties) } catch { /* analytics never blocks shipping */ }
-}
+/** Analytics seam — the personal build records nothing. Kept as a no-op so
+ *  the shipping workspace's call sites stay unchanged. */
+function event(_name: string, _properties?: Record<string, unknown>) { /* no telemetry */ }
 
 /** Store mutations already surface failures in the workspace alert. Event
  * handlers still need to consume rejected promises so React never produces an

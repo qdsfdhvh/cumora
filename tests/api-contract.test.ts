@@ -26,17 +26,18 @@ test('api-contract.json names every WsEvent variant in order', () => {
   assert.deepEqual(contract.websocket.eventTypes, eventTypes)
 })
 
-test('R2 public, signed, and allowed prefixes are one set', () => {
-  const worker = read('workers/r2-gate/src/index.ts')
+test('storage public + signed prefixes cover the allowed key prefixes', () => {
+  // The cloud build cross-checked these against the r2-gate Worker's
+  // PUBLIC_PREFIXES. The personal build has no edge Worker, so the invariant
+  // is now internal: every allowed storage prefix is served either publicly
+  // (avatars) or through a signed URL.
   const storage = read('server/src/storage.ts')
   const keys = read('server/src/storage-keys.ts')
-  const publicPrefixes = stringArray(worker, 'PUBLIC_PREFIXES')
+  const publicPrefixes = ['avatars/']
   const signedPrefixes = stringArray(storage, 'SIGNED_PREFIXES')
   const allowed = stringArray(keys, 'STORAGE_KEY_PREFIXES')
-  assert.deepEqual(publicPrefixes, ['avatars/'])
   assert.deepEqual(
     [...publicPrefixes, ...signedPrefixes].sort(),
     [...allowed].sort(),
   )
-  assert.equal(worker.includes('Anything outside this'), false)
 })

@@ -3,12 +3,12 @@
  * sign-in screen or the real UI based on the auth store.
  *
  * Two responsibilities:
- *   1. On first mount, consume a `#token=...&companyId=...` fragment if
- *      one is present (the OAuth callback redirected us back with it).
- *      Persist the session, then scrub the URL so a reload doesn't
- *      re-arm the fragment.
+ *   1. On first mount, consume a `#token=...&companyId=...` fragment if one
+ *      is present (legacy deep-link hand-off). Persist the session, then
+ *      scrub the URL so a reload doesn't re-arm the fragment.
  *   2. Probe /auth/me with the persisted token; if the token is valid
- *      the app loads, otherwise we fall through to AuthScreen.
+ *      the app loads, otherwise we fall through to AuthScreen (which in the
+ *      personal build signs in locally — no OAuth, no cloud).
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '@/api/client'
@@ -83,36 +83,6 @@ export function AuthGate({ children, unauthFallback }: AuthGateProps) {
     })()
     return () => { cancelled = true }
   }, [token, setMe, setServerCapabilities, clear, markReady])
-
-  // Electron-only: listen for OAuth tokens forwarded by the main
-  // process. The user clicked "Continue with Google" → we opened the
-  // system browser → provider redirected through our server to
-  // http://127.0.0.1:47823/auth/done → loopback page POSTed the
-  // parsed fragment to /auth/token → main IPC'd here. Plant the
-  // session and trip the /auth/me probe by setting token.
-  useEffect(() => {
-    if (!isElectron || !window.cumora?.auth) return
-    const off = window.cumora.auth.onToken(({ token: t, companyId }) => {
-      if (!t) return
-      setSession(t, { id: '', email: '', name: '' }, companyId)
-    })
-    return off
-  }, [setSession])
-
-  // Native (iOS / Android): when the SFSafariViewController flow
-  // completes, lib/native.ts plants the token fragment on our location
-  // and fires `cumora:oauth-token`. Consume it the same way as the
-  // top-of-mount `consumeOAuthFragment` so AuthGate's existing probe
-  // logic picks up the new token.
-  useEffect(() => {
-    const handler = () => {
-      const carried = consumeOAuthFragment()
-      if (!carried) return
-      setSession(carried.token, { id: '', email: '', name: '' }, carried.companyId)
-    }
-    window.addEventListener('cumora:oauth-token', handler)
-    return () => window.removeEventListener('cumora:oauth-token', handler)
-  }, [setSession])
 
   if (!ready) {
     // Brief loading flash while we probe — keeps the app from flashing

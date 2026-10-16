@@ -1,0 +1,278 @@
+/* eslint-env node */
+/**
+ * Local server + database lifecycle for the personal build.
+ *
+ * The packaged app is fully self-contained: this module forks the bundled
+ * Cumora API server (`resources/local-dist/server.cjs`) as an Electron
+ * utility process. That server runs its own in-process PGlite database and
+ * Redis-compatible bus (see server/src/db/embedded.ts + local-redis.ts), so
+ * there is no Postgres, no Redis, and no network egress to cumora.ai.
+ *
+ * Everything the server needs lives under the app's userData directory:
+ *
+ *   <userData>/local/pgdata       — the Postgres data directory (PGlite)
+ *   <userData>/local/uploads      — attachments in local-storage mode
+ *   <userData>/local/server.env   — operator-editable secrets (OPENAI key,
+ *                                   runtime secret) written by the app
+ *   <userData>/local/logs/server.log
+ *
+ * In dev (`npm run electron:dev`) the server is started separately by
+ * concurrently; this module then only health-probes it, so the dev flow is
+ * unchanged.
+ */
+const { app, utilityProcess } = require('electron')
+const path = require('node:path')
+const fs = require('node:fs')
+const http = require('node:http')
+const crypto = require('node:crypto')
+
+const SERVER_PORT = 5181
+const HEALTH_PATH = '/api/health'
+const HEALTH_TIMEOUT_MS = 120_000
+const MAX_LOG_LINES = 500
+
+/** Env-var keys the app owns in server.env. */
+const ENV_FILE_KEYS = ['OPENAI_API_KEY', 'AGENT_RUNTIME_SECRET']
+
+function localDir() {
+  return path.join(app.getPath('userData'), 'local')
+}
+
+function envFilePath() {
+  return path.join(localDir(), 'server.env')
+}
+
+function logFilePath() {
+  return path.join(localDir(), 'logs', 'server.log')
+}
+
+/** Minimal KEY=VALUE reader (no dotenv dependency in the Electron main). */
+function readEnvFile() {
+  const out = {}
+  try {
+    const raw = fs.readFileSync(envFilePath(), 'utf8')
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) continue
+      const eq = trimmed.indexOf('=')
+      if (eq <= 0) continue
+      const key = trimmed.slice(0, eq).trim()
+      let value = trimmed.slice(eq + 1).trim()
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1)
+      }
+      out[key] = value
+    }
+  } catch { /* absent file → defaults */ }
+  return out
+}
+
+function writeEnvFile(values) {
+  fs.mkdirSync(localDir(), { recursive: true })
+  const merged = { ...readEnvFile(), ...values }
+  const body = [
+    '# Cumora local server — secrets for THIS machine only.',
+    '# Written by the desktop app; safe to edit by hand (restart the app after).',
+    ...ENV_FILE_KEYS.map((k) => `${k}=${merged[k] ?? ''}`),
+    '',
+  ].join('\n')
+  fs.writeFileSync(envFilePath(), body, { mode: 0o600 })
+}
+
+function ensureRuntimeSecret() {
+  const existing = readEnvFile().AGENT_RUNTIME_SECRET
+  if (existing && existing.length >= 32) return existing
+  const secret = crypto.randomBytes(32).toString('hex')
+  writeEnvFile({ AGENT_RUNTIME_SECRET: secret })
+  return secret
+}
+
+/** Server bundle location. Packaged: extraResources. Dev: source entry. */
+function packagedServerPath() {
+  return path.join(process.resourcesPath, 'local-dist', 'server.cjs')
+}
+
+function devCommandHint() {
+  return 'npm run server:dev'
+}
+
+function probeHealth(timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const req = http.get(
+      { host: '127.0.0.1', port: SERVER_PORT, path: HEALTH_PATH, timeout: timeoutMs },
+      (res) => {
+        let body = ''
+        res.on('data', (chunk) => { body += chunk })
+        res.on('end', () => {
+          resolve(res.statusCode === 200 && body.includes('"ok":true'))
+        })
+      },
+    )
+    req.on('timeout', () => { req.destroy(); resolve(false) })
+    req.on('error', () => resolve(false))
+  })
+}
+
+class LocalServer {
+  constructor() {
+    this.child = null
+    this.state = 'stopped' // stopped | starting | ready | error
+    this.detail = ''
+    this.logLines = []
+    this.onStatus = null
+    this.startPromise = null
+  }
+
+  setStatusHandler(handler) { this.onStatus = handler }
+
+  status() {
+    const envFile = readEnvFile()
+    return {
+      state: this.state,
+      detail: this.detail,
+      port: SERVER_PORT,
+      hasApiKey: Boolean(envFile.OPENAI_API_KEY),
+      dataDir: localDir(),
+      isDev: !app.isPackaged,
+      log: this.logLines.slice(-120),
+    }
+  }
+
+  emit() {
+    try { this.onStatus?.(this.status()) } catch { /* renderer gone */ }
+  }
+
+  pushLog(line) {
+    const stamped = line.replace(/\s+$/, '')
+    if (!stamped) return
+    this.logLines.push(stamped)
+    if (this.logLines.length > MAX_LOG_LINES) this.logLines.splice(0, this.logLines.length - MAX_LOG_LINES)
+    try {
+      fs.appendFileSync(logFilePath(), stamped + '\n')
+    } catch { /* log dir missing is non-fatal */ }
+    this.emit()
+  }
+
+  /** Build the environment the forked server boots with. */
+  serverEnv() {
+    const dir = localDir()
+    const env = {
+      ...process.env,
+      NODE_ENV: 'production',
+      PORT: String(SERVER_PORT),
+      // Embedded data + auth defaults for a single-user local install.
+      CUMORA_DATA_DIR: dir,
+      CUMORA_UPLOAD_DIR: path.join(dir, 'uploads'),
+      CUMORA_LOCAL_AUTH: '1',
+      // The renderer is served from app://cumora in production and
+      // http://localhost:5180 in dev — both must pass CORS.
+      CUMORA_CORS_ORIGINS: 'app://cumora,http://localhost:5180,http://127.0.0.1:5180',
+      AGENT_RUNTIME_SECRET: ensureRuntimeSecret(),
+    }
+    fs.mkdirSync(path.join(dir, 'logs'), { recursive: true })
+    const envFile = readEnvFile()
+    if (envFile.OPENAI_API_KEY) env.OPENAI_API_KEY = envFile.OPENAI_API_KEY
+    return env
+  }
+
+  /** Start (or adopt) the local server. Resolves once it is healthy. */
+  start() {
+    if (this.startPromise) return this.startPromise
+    this.startPromise = this.#startInner().finally(() => { this.startPromise = null })
+    return this.startPromise
+  }
+
+  async #startInner() {
+    // Fast path: something healthy already listens (a previous instance that
+    // outlived the app, or the dev server started by electron:dev).
+    if (await probeHealth()) {
+      this.state = 'ready'
+      this.detail = app.isPackaged ? 'already running' : `external (${devCommandHint()})`
+      this.emit()
+      return
+    }
+
+    this.state = 'starting'
+    this.detail = app.isPackaged ? 'starting local server' : `dev server not reachable — run \`${devCommandHint()}\``
+    this.emit()
+
+    if (!app.isPackaged) {
+      // Dev: the server is a separate process; poll until it appears.
+      const ok = await this.waitHealth(HEALTH_TIMEOUT_MS).catch(() => false)
+      this.state = ok ? 'ready' : 'error'
+      this.detail = ok ? `external (${devCommandHint()})` : `dev server not reachable — run \`${devCommandHint()}\``
+      this.emit()
+      return
+    }
+
+    const entry = packagedServerPath()
+    if (!fs.existsSync(entry)) {
+      this.state = 'error'
+      this.detail = `server bundle missing: ${entry}`
+      this.emit()
+      return
+    }
+
+    const child = utilityProcess.fork(entry, [], {
+      cwd: localDir(),
+      env: this.serverEnv(),
+      stdio: 'pipe',
+      serviceName: 'cumora-local-server',
+    })
+    this.child = child
+
+    child.stdout?.on('data', (chunk) => this.pushLog(String(chunk)))
+    child.stderr?.on('data', (chunk) => this.pushLog(String(chunk)))
+    child.on('exit', (code) => {
+      this.child = null
+      if (this.state !== 'stopped') {
+        this.state = 'error'
+        this.detail = `local server exited (code ${code ?? 'null'})`
+        this.emit()
+      }
+    })
+
+    const ok = await this.waitHealth(HEALTH_TIMEOUT_MS).catch(() => false)
+    this.state = ok ? 'ready' : 'error'
+    this.detail = ok ? 'ready' : 'local server did not become healthy in time'
+    this.emit()
+  }
+
+  async waitHealth(timeoutMs) {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (await probeHealth()) return true
+      await new Promise((resolve) => setTimeout(resolve, 400))
+    }
+    return false
+  }
+
+  /** Persist the OpenAI key and restart so the server picks it up. */
+  async setOpenAIKey(key) {
+    const trimmed = String(key ?? '').trim()
+    writeEnvFile({ OPENAI_API_KEY: trimmed })
+    await this.restart()
+    return this.status()
+  }
+
+  async restart() {
+    this.stop()
+    // Give the OS a beat to release the listening socket / PGlite lock.
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    this.state = 'stopped'
+    return this.start()
+  }
+
+  stop() {
+    const child = this.child
+    this.child = null
+    this.state = 'stopped'
+    if (child) {
+      try { child.kill() } catch { /* already gone */ }
+    }
+  }
+}
+
+const localServer = new LocalServer()
+
+module.exports = { localServer, SERVER_PORT }
