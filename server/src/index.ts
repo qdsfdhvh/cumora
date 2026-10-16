@@ -30,7 +30,7 @@ import { startCalendarScheduler, stopCalendarScheduler } from './calendar.js'
 import { startPollExpirationSweeper, stopPollExpirationSweeper } from './polls.js'
 import { startLlmRollupRefresher, stopLlmRollupRefresher } from './agents/llm-rollup.js'
 import { notifyAlert } from './alerting.js'
-import { bootEmbeddedInfra } from './db/embedded.js'
+import { bootEmbeddedInfra, embeddedEnabled } from './db/embedded.js'
 import { startShippingMaintenance } from './shipping-maintenance.js'
 import { startRealtimeOutboxWorker, stopRealtimeOutboxWorker } from './realtime-outbox.js'
 import { startWorkspaceCleanupWorker, stopWorkspaceCleanupWorker } from './workspace-cleanup.js'
@@ -229,8 +229,13 @@ async function main() {
   // doc redis channels here so two server instances stay convergent.
   bootDocumentBus()
 
-  server.listen(env.PORT, () => {
-    console.log(`[boot] cumora server :${env.PORT} · instance ${env.INSTANCE_ID} · model ${env.OPENAI_MODEL}`)
+  // Loopback by default in embedded mode: the local sign-in endpoint needs no
+  // credential, so the port must not be reachable from the network. A plain
+  // server deploy (dev, tests, a shared host) keeps upstream's bind-everything
+  // behaviour unless CUMORA_BIND_HOST says otherwise.
+  const bindHost = env.BIND_HOST || (embeddedEnabled() ? '127.0.0.1' : '')
+  server.listen(env.PORT, bindHost || undefined, () => {
+    console.log(`[boot] cumora server ${bindHost || '*'} :${env.PORT} · instance ${env.INSTANCE_ID} · model ${env.OPENAI_MODEL}`)
   })
 
   // Seed and backfill after listen. They used to run first, so a rollout

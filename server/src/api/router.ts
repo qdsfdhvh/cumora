@@ -41,8 +41,9 @@ import {
 import { joinAllHands, onboardStarterAgents, seedMemberDms } from '../onboardCompany.js'
 import { ogPreview, OgError } from '../og.js'
 import { sendInvitationEmail, type InvitationEmailDelivery } from '../invitation-email.js'
-import { signInLocal } from '../local-auth.js'
+import { signInLocal, getLocalAccountSummary } from '../local-auth.js'
 import { normalizeProfilePatch, ProfileValidationError } from '../profile.js'
+import { normalizeAvatarUpload, AvatarUploadError } from '../avatar-upload.js'
 import {
   issuePairingCode, pairComputer, announceComputerOnline,
   resolveDevice, mintAgentRuntimeToken, listAgentsForComputer,
@@ -774,7 +775,20 @@ api.get('/metrics', async (req, res) => {
  * OAuth callbacks used. */
 
 api.get('/auth/providers', safe(async (_req, res) => {
-  res.json({ providers: [], local: true })
+  // The personal build has no providers, but the sign-in screen still wants to
+  // know whether this machine already has an account (then it can show who it
+  // is and skip the setup form) and what the workspace branding looks like.
+  const account = await getLocalAccountSummary().catch(() => null)
+  res.json({
+    providers: [],
+    local: true,
+    account: account
+      ? { name: account.name, email: account.email, avatarUrl: account.avatarUrl }
+      : null,
+    branding: account
+      ? { workspaceName: account.workspaceName, logoUrl: account.workspaceLogoUrl }
+      : null,
+  })
 }))
 
 api.post('/auth/local', safe(async (req, res) => {
@@ -909,8 +923,8 @@ api.get('/auth/me', safe(async (req, res) => {
     `SELECT id, email, display_name, email_verified_at, is_admin FROM users WHERE id = $1`, [userId],
   )
   if (!rows[0]) { res.status(401).json({ error: 'session points to missing user' }); return }
-  const { rows: companies } = await pool.query<{ id: string; name: string; slug: string; role: string; tier: string }>(
-    `SELECT c.id, c.name, c.slug, cm.role, COALESCE(owner.tier, 'free') AS tier
+  const { rows: companies } = await pool.query<{ id: string; name: string; slug: string; role: string; tier: string; logoUrl: string | null }>(
+    `SELECT c.id, c.name, c.slug, c.logo_url AS "logoUrl", cm.role, COALESCE(owner.tier, 'free') AS tier
        FROM company_members cm
        JOIN companies c ON c.id = cm.company_id
        LEFT JOIN users owner ON owner.id = c.owner_user_id
@@ -1031,19 +1045,8 @@ api.patch('/me', safe(async (req, res) => {
  *  participant row every room reads. */
 api.post('/me/avatar', requireAuthBeforeLargeBody, uploadJsonParser, safe(async (req, res) => {
   const me = requireAuth(req)
-  const mime = String(req.body?.mime ?? '').trim().toLowerCase()
-  const dataBase64 = String(req.body?.dataBase64 ?? '')
-  if (!mime || !dataBase64) throw new HttpError(400, 'mime and dataBase64 are required')
-  const policy = MIME_POLICY[mime]
-  if (!policy || policy.kind !== 'img') {
-    throw new HttpError(415, `an image is required (got ${mime || 'nothing'})`)
-  }
-  const buf = Buffer.from(dataBase64, 'base64')
-  if (buf.length === 0) throw new HttpError(400, 'empty image')
-  if (buf.length > MAX_UPLOAD_BYTES) {
-    throw new HttpError(413, `image is larger than ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB`)
-  }
-  const key = `avatars/${me}-${randomUUID().replace(/-/g, '').slice(0, 10)}.${policy.ext}`
+  const { buf, mime, ext } = readAvatarUpload(req.body)
+  const key = `avatars/${me}-${randomUUID().replace(/-/g, '').slice(0, 10)}.${ext}`
   const url = await storage.put(key, buf, mime)
   await pool.query(`UPDATE users SET avatar_url = $1 WHERE id = $2`, [url, me])
   await pool.query(`UPDATE participants SET avatar_url = $1 WHERE id = $2`, [url, me])
@@ -1055,7 +1058,7 @@ api.post('/me/avatar', requireAuthBeforeLargeBody, uploadJsonParser, safe(async 
 api.get('/companies', async (req, res) => {
   const me = userId(req)
   const { rows } = await pool.query(
-    `SELECT c.id, c.name, c.slug, c.created_at AS "createdAt", cm.role
+    `SELECT c.id, c.name, c.slug, c.logo_url AS "logoUrl", c.created_at AS "createdAt", cm.role
        FROM companies c
        JOIN company_members cm ON cm.company_id = c.id AND cm.user_id = $1
       ORDER BY cm.joined_at ASC`,
@@ -1063,6 +1066,37 @@ api.get('/companies', async (req, res) => {
   )
   res.json(rows)
 })
+
+/** Rename the workspace (owner/admin). The personal build owns its own
+ *  branding — nothing here talks to a cloud workspace registry. */
+api.patch('/companies/:id', safe(async (req, res) => {
+  const { companyId } = await requireCompanyRole(req)
+  const id = String(req.params.id)
+  if (id !== companyId) throw new HttpError(403, 'you can only edit your active workspace')
+  const name = String(req.body?.name ?? '').replace(/\s+/g, ' ').trim()
+  if (!name) throw new HttpError(400, 'name cannot be empty')
+  if (name.length > 80) throw new HttpError(400, 'name must be 80 characters or fewer')
+  await pool.query(`UPDATE companies SET name = $1 WHERE id = $2`, [name, id])
+  res.json({ id, name })
+}));
+
+/** Set (or clear) the workspace logo. Body is the same base64 image as
+ *  POST /me/avatar; `{ clear: true }` removes it. */
+api.post('/companies/:id/logo', requireAuthBeforeLargeBody, uploadJsonParser, safe(async (req, res) => {
+  const { companyId } = await requireCompanyRole(req)
+  const id = String(req.params.id)
+  if (id !== companyId) throw new HttpError(403, 'you can only edit your active workspace')
+  if (req.body?.clear === true) {
+    await pool.query(`UPDATE companies SET logo_url = NULL WHERE id = $1`, [id])
+    res.json({ url: null })
+    return
+  }
+  const { buf, mime, ext } = readAvatarUpload(req.body)
+  const key = `avatars/company-${id}-${randomUUID().replace(/-/g, '').slice(0, 10)}.${ext}`
+  const url = await storage.put(key, buf, mime)
+  await pool.query(`UPDATE companies SET logo_url = $1 WHERE id = $2`, [url, id])
+  res.json({ url, key })
+}));
 
 api.post('/companies', async (req, res) => {
   const me = userId(req)
@@ -3259,6 +3293,45 @@ api.post('/agents/:id/avatar/generate', async (req, res) => {
     const msg = e instanceof Error ? e.message : String(e)
     res.status(502).json({ error: `image generation failed: ${msg}` })
   }
+})
+
+/** Parse an avatar upload body, mapping validation failures onto HTTP. */
+function readAvatarUpload(body: unknown): ReturnType<typeof normalizeAvatarUpload> {
+  try {
+    return normalizeAvatarUpload(body, MAX_UPLOAD_BYTES)
+  } catch (e) {
+    if (e instanceof AvatarUploadError) throw new HttpError(e.status, e.message)
+    throw e
+  }
+}
+
+/** Replace an agent's portrait with an uploaded image — the counterpart to
+ *  avatar/generate for people who already have a picture they like. */
+api.post('/agents/:id/avatar', requireAuthBeforeLargeBody, uploadJsonParser, async (req, res) => {
+  // Same bar as every other agent-profile edit: owner/admin.
+  const { companyId: tenant } = await requireCompanyRole(req)
+  const id = String(req.params.id)
+  const { rows } = await pool.query<{ kind: string }>(
+    `SELECT kind FROM participants WHERE id = $1 AND company_id = $2`, [id, tenant],
+  )
+  if (!rows[0]) { res.status(404).json({ error: 'not found' }); return }
+  if (rows[0].kind !== 'agent') { res.status(400).json({ error: 'not an agent' }); return }
+  let upload: ReturnType<typeof normalizeAvatarUpload>
+  try {
+    upload = readAvatarUpload(req.body)
+  } catch (e) {
+    const status = e instanceof HttpError ? e.status : 400
+    res.status(status).json({ error: e instanceof Error ? e.message : 'invalid image' }); return
+  }
+  const key = `avatars/agent-${id}-${randomUUID().replace(/-/g, '').slice(0, 10)}.${upload.ext}`
+  const url = await storage.put(key, upload.buf, upload.mime)
+  await pool.query(
+    `UPDATE participants SET avatar_url = $1 WHERE id = $2 AND company_id = $3`,
+    [url, id, tenant],
+  )
+  const { invalidatePersonaCache } = await import('../agents/personas.js')
+  invalidatePersonaCache(id)
+  res.json({ url, key })
 })
 
 /** Re-hire an off-boarded agent — their memory and log come right back. */

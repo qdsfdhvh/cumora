@@ -49,6 +49,13 @@ Electron its JIT/unsigned-memory entitlements.
 3. **Enter Cumora** calls `POST /api/auth/local`, which find-or-creates the
    machine's single user, its workspace, and `#all-hands`.
 
+Later launches do not ask for anything: once the local account exists the app
+signs it in automatically (the screen only appears after an explicit sign-out,
+which is remembered in `cumora.auth.signedOut`). Name, email, and avatar are
+edited in **Me → 个人资料 → 身份**; the workspace name and logo in
+**Me → 个人资料 → 工作区** — the logo then stands in for the built-in mark in
+the title bar, the workspace switcher, and the sign-in screen.
+
 Secrets live in `<userData>/local/server.env` (mode `0600`), written by the
 app's **Me → Local server** pane or by hand:
 
@@ -147,6 +154,19 @@ arrive with `computer_id = NULL` so the next pairing adopts them, and
 starter team. Run it with the app **closed** — the database allows a single
 writer.
 
+## Branding and identity
+
+Everything here is local, so there is no provider to read any of it from:
+
+| what | endpoint | where it shows |
+|---|---|---|
+| your name / email / avatar | `PATCH /api/me`, `POST /api/me/avatar` | profile card, message authors, roster |
+| an agent's portrait | `POST /agents/:id/avatar` (or `/avatar/generate`) | every place the agent appears |
+| workspace name / logo | `PATCH /companies/:id`, `POST /companies/:id/logo` | title bar, workspace switcher, sign-in screen |
+
+Images are stored under `<userData>/local/uploads/avatars/` and served from the
+API origin, so nothing leaves the machine and no CDN is involved.
+
 ## Embedded-database constraints
 
 `server/src/db/embedded.ts` runs the whole server against one PGlite backend
@@ -169,6 +189,9 @@ and emulates the `pg` pool contract:
   Statements slower than 3 s (`CUMORA_EMBEDDED_SLOW_QUERY_MS`) are logged with
   their SQL to `logs/server.log`, which is how you find the culprit.
 - `pg_advisory_lock` is single-session here — fine for one server instance.
+- The server **binds 127.0.0.1** in embedded mode. `POST /api/auth/local` mints
+  a session without any credential, so the port must not be reachable from the
+  LAN; `CUMORA_BIND_HOST` overrides it if you really want otherwise.
 - `pgvector` is unavailable, so agent memory degrades to the recency-only path
   the code already supports; `pg_trgm` ships with PGlite and is used normally.
 

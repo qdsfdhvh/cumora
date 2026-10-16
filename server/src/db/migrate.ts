@@ -53,6 +53,7 @@ import {
   boardCardDueOnChecksum,
 } from './migrations/0010-board-card-due-on.js'
 import { AGENT_NATIVE_FAST_MODE_SQL, agentNativeFastModeChecksum } from './migrations/0011-agent-native-fast-mode.js'
+import { COMPANY_LOGO_SQL, companyLogoChecksum } from './migrations/0012-company-logo.js'
 
 /** Frozen data backfill embedded in migration 0001. Exported so its behavior
  * can be exercised against PostgreSQL without replaying the whole migration. */
@@ -2641,6 +2642,12 @@ const VERSIONED_MIGRATIONS: readonly VersionedMigration[] = [
     sourceChecksum: agentNativeFastModeChecksum(),
     transactional: true,
     up: async (client) => { await client.query(AGENT_NATIVE_FAST_MODE_SQL) },
+  },
+  {
+    ...SCHEMA_MIGRATIONS[11],
+    sourceChecksum: companyLogoChecksum(),
+    transactional: true,
+    up: async (client) => { await client.query(COMPANY_LOGO_SQL) },
   },
 ]
 

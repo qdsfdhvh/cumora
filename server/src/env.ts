@@ -237,6 +237,13 @@ export const env = {
    *  app's Application Support directory instead of server/uploads). */
   UPLOAD_DIR_OVERRIDE: process.env.CUMORA_UPLOAD_DIR ?? '',
   /**
+   * Interface the HTTP server binds. Empty means every interface (the cloud
+   * build sat behind a cluster Service). The personal build defaults to
+   * loopback: `POST /api/auth/local` mints a session without any credential,
+   * so the port must never be reachable from the LAN.
+   */
+  BIND_HOST: process.env.CUMORA_BIND_HOST ?? '',
+  /**
    * Origin used to build ABSOLUTE /uploads URLs in local-storage mode.
    * The packaged app's renderer is served from `app://cumora`, where a
    * relative `/uploads/...` would resolve against the app scheme and 404 —

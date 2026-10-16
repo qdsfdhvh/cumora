@@ -15,6 +15,8 @@ export interface AuthCompany {
   role: string
   /** plan tier of the company (owner's tier). 'free' agents are BYOA-only. */
   tier?: 'free' | 'pro' | 'max' | string
+  /** Custom workspace logo (local upload). Falls back to the built-in mark. */
+  logoUrl?: string | null
 }
 
 export interface AuthUser {
@@ -53,6 +55,10 @@ interface AuthState {
 const TOKEN_KEY = 'cumora.auth.token'
 const COMPANY_KEY = 'cumora.auth.company'
 
+/** Set when the owner signs out on purpose, so the sign-in screen's automatic
+ *  local sign-in does not bounce them straight back in. Cleared by setSession. */
+export const SIGNED_OUT_KEY = 'cumora.auth.signedOut'
+
 function resetWorkspaceStores(): void {
   void Promise.all([
     import('./documents').then(({ useDocuments }) => useDocuments.getState().reset()),
@@ -74,6 +80,7 @@ export const useAuth = create<AuthState>((set) => ({
   setSession(token, user, companyId) {
     // A fresh session must never inherit a code revealed by the previous one.
     usePairingCodes.getState().clear()
+    localStorage.removeItem(SIGNED_OUT_KEY)
     localStorage.setItem(TOKEN_KEY, token)
     if (companyId) localStorage.setItem(COMPANY_KEY, companyId)
     set((s) => ({ token, user, activeCompanyId: companyId, ready: true, contextEpoch: s.contextEpoch + 1 }))

@@ -5,7 +5,7 @@ import { useComputers } from '@/stores/computers'
 import { usePrefs } from '@/stores/preferences'
 import { useSoundStore } from '@/stores/sound'
 import { useDevtools } from '@/stores/devtools'
-import { useAuth } from '@/stores/auth'
+import { useAuth, SIGNED_OUT_KEY } from '@/stores/auth'
 import { usePairingCodes } from '@/stores/pairing-codes'
 import { copyText } from '@/lib/clipboard'
 import { Avatar } from '@/components/Avatar'
@@ -135,6 +135,9 @@ function ProfileTab() {
     // Server-side: revoke the session row so the token is dead even if it
     // leaks. Best-effort — client clear still happens on network failure.
     try { await api.authLogout() } catch (e) { console.warn('[signout] server call failed', e) }
+    // Remember the intent: the sign-in screen signs the local account in
+    // automatically, and signing out must not be undone by a reload.
+    localStorage.setItem(SIGNED_OUT_KEY, '1')
     useAuth.getState().clear()
     location.reload()
   }
@@ -250,6 +253,8 @@ function ProfileTab() {
         </div>
       </Section>
 
+      <WorkspaceSection />
+
       <Section title={t('me.sectionSession')}>
         <div className="bg-cloud rounded-[14px] p-5 flex items-center justify-between gap-4"
           style={{ border: '1px solid var(--ink-100)' }}>
@@ -273,6 +278,138 @@ function ProfileTab() {
 
       <AboutSection />
     </div>
+  )
+}
+
+/** Workspace name + logo. This is the owner's own app now, so the brand mark
+ *  in the title bar is theirs to set (see docs/LOCAL_BUILD.md). */
+function WorkspaceSection() {
+  const t = useT()
+  const activeCompanyId = useAuth((s) => s.activeCompanyId)
+  const company = useAuth((s) => s.companies.find((c) => c.id === s.activeCompanyId) ?? null)
+  const [name, setName] = useState(company?.name ?? '')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const fileRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => { setName(company?.name ?? '') }, [company?.name])
+
+  const canEdit = company?.role === 'owner' || company?.role === 'admin'
+  if (!company || !canEdit) return null
+
+  async function refreshWorkspace() {
+    const me = await api.authMe()
+    useAuth.getState().setMe(me.user, me.companies, me.activeCompanyId)
+  }
+
+  async function saveName() {
+    if (!activeCompanyId || !name.trim()) return
+    setBusy(true); setErr(null)
+    try {
+      await api.updateWorkspace(activeCompanyId, { name: name.trim() })
+      await refreshWorkspace()
+      setSaved(true); window.setTimeout(() => setSaved(false), 2500)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally { setBusy(false) }
+  }
+
+  async function pickLogo(file: File) {
+    if (!activeCompanyId) return
+    setBusy(true); setErr(null)
+    try {
+      await api.uploadWorkspaceLogo(activeCompanyId, file)
+      await refreshWorkspace()
+      setSaved(true); window.setTimeout(() => setSaved(false), 2500)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  async function removeLogo() {
+    if (!activeCompanyId) return
+    setBusy(true); setErr(null)
+    try {
+      await api.clearWorkspaceLogo(activeCompanyId)
+      await refreshWorkspace()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Section title={t('me.sectionWorkspace')}>
+      <div className="bg-cloud rounded-[14px] p-5 flex items-start gap-5"
+        style={{ border: '1px solid var(--ink-100)' }}>
+        <div className="shrink-0">
+          {company.logoUrl
+            ? <img src={company.logoUrl} alt={company.name} width={72} height={72}
+                className="rounded-[16px] object-cover" style={{ width: 72, height: 72 }} />
+            : <div className="w-[72px] h-[72px] rounded-[16px] bg-paper grid place-items-center text-ink-300 font-display text-[22px]"
+                style={{ border: '1px solid var(--ink-100)' }}>
+                {company.name.charAt(0).toUpperCase()}
+              </div>}
+        </div>
+        <div className="flex-1 min-w-0 flex flex-col gap-2.5 max-w-[420px]">
+          <label className="text-[11px] text-ink-400 font-display">{t('me.workspaceNameLabel')}</label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={80}
+            className="h-10 px-3 rounded-[8px] border border-ink-100 bg-paper text-ink-900 text-[14px] focus:outline-none focus:border-sky2-300"
+          />
+          <div className="text-[11px] text-ink-400 font-display">{t('me.workspaceLogoLabel')}</div>
+          <div className="text-[11px] text-ink-300 font-display italic leading-snug">{t('me.workspaceLogoHint')}</div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={busy}
+              className="h-9 px-3 rounded-[8px] bg-paper text-ink-700 hover:bg-ink-100 text-[12.5px] font-display transition-colors disabled:opacity-40"
+              style={{ border: '1px solid var(--ink-100)' }}
+            >
+              {t('me.uploadLogo')}
+            </button>
+            {company.logoUrl && (
+              <button
+                type="button"
+                onClick={removeLogo}
+                disabled={busy}
+                className="h-9 px-3 rounded-[8px] text-[12.5px] font-display text-ink-500 hover:text-coral-deep transition-colors disabled:opacity-40"
+              >
+                {t('me.removeLogo')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={saveName}
+              disabled={busy || !name.trim() || name.trim() === company.name}
+              className="h-9 px-4 rounded-[8px] bg-skype hover:bg-skype-deep text-white text-[13px] font-display transition-colors disabled:opacity-40"
+            >
+              {t('common.save')}
+            </button>
+          </div>
+          <div className="text-[11px] text-ink-300 font-display italic">{t('me.workspaceLocalNote')}</div>
+          {err && <div className="text-[11.5px] text-red-600 break-words">{err}</div>}
+          {saved && <div className="text-[11.5px] text-ink-500 font-display">{t('me.workspaceSaved')}</div>}
+        </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) void pickLogo(file)
+          }}
+        />
+      </div>
+    </Section>
   )
 }
 

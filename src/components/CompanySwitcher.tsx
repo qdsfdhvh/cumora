@@ -81,7 +81,10 @@ export function CompanySwitcher() {
           className="w-4 h-4 rounded grid place-items-center text-[10px] font-bold text-white"
           style={{ background: 'var(--skype)' }}
         >
-          {active ? active.name.charAt(0).toUpperCase() : '·'}
+          {active?.logoUrl
+            ? <img src={active.logoUrl} alt={active.name} width={22} height={22}
+                className="rounded-[6px] object-cover" style={{ width: 22, height: 22 }} />
+            : active ? active.name.charAt(0).toUpperCase() : '·'}
         </span>
         <span className="max-w-[140px] truncate">{active?.name ?? t('company.noWorkspace')}</span>
         <span className="text-ink-300 text-[10px] leading-none">▾</span>
@@ -111,7 +114,10 @@ export function CompanySwitcher() {
                 className="w-5 h-5 rounded grid place-items-center text-[10px] font-bold text-white shrink-0"
                 style={{ background: 'var(--skype)' }}
               >
-                {c.name.charAt(0).toUpperCase()}
+                {c.logoUrl
+                  ? <img src={c.logoUrl} alt={c.name} width={28} height={28}
+                      className="rounded-[8px] object-cover" style={{ width: 28, height: 28 }} />
+                  : c.name.charAt(0).toUpperCase()}
               </span>
               <span className="flex-1 min-w-0">
                 <span className="block text-[12.5px] text-ink-900 truncate">{c.name}</span>

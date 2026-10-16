@@ -67,7 +67,9 @@ export function AgentEditor({ agent, onClose, onSaved }: Props) {
   const [err, setErr] = useState<string | null>(null)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(agent?.avatarUrl ?? null)
   const [generatingAvatar, setGeneratingAvatar] = useState(false)
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [avatarErr, setAvatarErr] = useState<string | null>(null)
+  const avatarFileRef = useRef<HTMLInputElement | null>(null)
   const [repairCode, setRepairCode] = useState<string | null>(null)
   const [repairErr, setRepairErr] = useState<string | null>(null)
   const [repairCopied, setRepairCopied] = useState(false)
@@ -290,6 +292,25 @@ export function AgentEditor({ agent, onClose, onSaved }: Props) {
   }
 
   const initial = (name || agent?.id || '?').charAt(0).toUpperCase()
+
+  /** Upload a picture you already have. The endpoint writes the portrait
+   *  straight onto the agent's row, so the participant reload below makes it
+   *  visible everywhere at once — same immediacy as AI generation. */
+  async function uploadAvatarFile(file: File) {
+    if (!agent) return
+    setUploadingAvatar(true)
+    setAvatarErr(null)
+    try {
+      const { url } = await api.uploadAgentAvatar(agent.id, file)
+      setAvatarUrl(url)
+      await useParticipants.getState().load()
+    } catch (e) {
+      setAvatarErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setUploadingAvatar(false)
+      if (avatarFileRef.current) avatarFileRef.current.value = ''
+    }
+  }
 
   const generateAvatar = async () => {
     if (!editing || !agent) return
@@ -656,13 +677,41 @@ export function AgentEditor({ agent, onClose, onSaved }: Props) {
                   </div>
                 )}
 
-                {avatarUrl && !generatingAvatar && (
+                <div className="flex items-center gap-3 flex-wrap">
                   <button
                     type="button"
-                    onClick={() => setAvatarUrl(null)}
-                    className="self-start text-[11.5px] text-ink-500 hover:text-coral-deep transition"
-                  >{t('agent.clearPortrait')}</button>
-                )}
+                    onClick={() => avatarFileRef.current?.click()}
+                    disabled={!editing || generatingAvatar || uploadingAvatar}
+                    className="self-start inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12px] font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{
+                      background: editing ? 'var(--paper)' : 'var(--ink-100)',
+                      color: editing ? 'var(--ink-700)' : 'var(--ink-500)',
+                      border: '1px solid var(--ink-100)',
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M4 20h16" />
+                    </svg>
+                    {uploadingAvatar ? t('agent.uploadingImage') : t('agent.uploadImage')}
+                  </button>
+                    {avatarUrl && !generatingAvatar && (
+                    <button
+                      type="button"
+                      onClick={() => setAvatarUrl(null)}
+                      className="self-start text-[11.5px] text-ink-500 hover:text-coral-deep transition"
+                    >{t('agent.clearPortrait')}</button>
+                    )}
+                </div>
+                <input
+                  ref={avatarFileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) void uploadAvatarFile(file)
+                  }}
+                />
 
                 {avatarErr && (
                   <div className="text-[11.5px] text-coral-deep bg-coral-soft py-1.5 px-2 rounded-md leading-[1.4]">

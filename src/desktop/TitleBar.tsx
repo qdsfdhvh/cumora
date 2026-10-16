@@ -1,11 +1,14 @@
 import type { CSSProperties, MouseEvent } from 'react'
 import { CloudLogo } from '@/components/Avatar'
+import { useAuth } from '@/stores/auth'
 import { CompanySwitcher } from '@/components/CompanySwitcher'
 import { isElectron, isWindows, trafficLightInset } from '@/lib/runtime'
 import { useLocaleStore, useT } from '@/lib/i18n'
 
 export function TitleBar() {
   const t = useT()
+  // A workspace with its own logo wears it in the title bar (Me → Workspace).
+  const company = useAuth((s) => s.companies.find((c) => c.id === s.activeCompanyId) ?? null)
   const locale = useLocaleStore((s) => s.locale)
   const windowsChrome = isElectron && isWindows
   // In Electron with hidden titleBarStyle on mac, native traffic lights land in this strip.
@@ -64,8 +67,18 @@ export function TitleBar() {
         <div style={{ minWidth: reservedLeft }} />
       )}
       <div className="flex items-center justify-center gap-2.5 font-display font-medium text-[14px] text-ink-700 tracking-wide whitespace-nowrap">
-        <CloudLogo />
-        <span>Cumora</span>
+        {company?.logoUrl
+          ? <img
+              src={company.logoUrl}
+              alt={company.name}
+              width={22}
+              height={22}
+              draggable={false}
+              className="rounded-[6px] object-cover"
+              style={{ width: 22, height: 22 }}
+            />
+          : <CloudLogo />}
+        <span>{company?.logoUrl ? company.name : 'Cumora'}</span>
         <em className={`${windowsChrome ? 'hidden xl:inline' : ''} font-normal text-ink-500`} style={{ fontStyle: 'italic' }}>{t('common.titlebarTagline')}</em>
       </div>
       <div
