@@ -419,6 +419,7 @@ function AboutSection() {
   const [keyInput, setKeyInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [backupMsg, setBackupMsg] = useState<string | null>(null)
 
   useEffect(() => {
     const bridge = window.cumora?.localServer
@@ -429,6 +430,22 @@ function AboutSection() {
   }, [])
 
   if (!status) return null
+
+  /** One-click backup: the main process asks for a destination, stops the
+   *  embedded server so the database closes cleanly, archives, restarts. */
+  async function backup() {
+    const bridge = window.cumora?.localServer
+    if (!bridge?.backup) return
+    setBackupMsg(t('me.backupRunning'))
+    try {
+      const r = await bridge.backup()
+      if (r.cancelled) setBackupMsg(null)
+      else if (r.ok) setBackupMsg(t('me.backupDone', { path: r.path ?? '' }))
+      else setBackupMsg(t('me.backupFailed', { error: r.error ?? 'unknown error' }))
+    } catch (e) {
+      setBackupMsg(t('me.backupFailed', { error: e instanceof Error ? e.message : String(e) }))
+    }
+  }
 
   async function saveKey() {
     const bridge = window.cumora?.localServer
@@ -460,13 +477,23 @@ function AboutSection() {
               {t('me.dataDirLabel')}: {status.dataDir}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => { void window.cumora?.localServer?.openDataDir() }}
-            className="shrink-0 h-9 px-3 rounded-[8px] text-[12.5px] font-display bg-paper text-ink-700 hover:bg-ink-100 transition-colors"
-          >
-            {t('me.openDataDir')}
-          </button>
+          <div className="shrink-0 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={backup}
+              disabled={status.backingUp}
+              className="h-9 px-3 rounded-[8px] text-[12.5px] font-display bg-skype hover:bg-skype-deep text-white transition-colors disabled:opacity-50"
+            >
+              {status.backingUp ? t('me.backupRunning') : t('me.backupNow')}
+            </button>
+            <button
+              type="button"
+              onClick={() => { void window.cumora?.localServer?.openDataDir() }}
+              className="h-9 px-3 rounded-[8px] text-[12.5px] font-display bg-paper text-ink-700 hover:bg-ink-100 transition-colors"
+            >
+              {t('me.openDataDir')}
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-col gap-2">
@@ -501,6 +528,7 @@ function AboutSection() {
             </button>
           </div>
           {saved && <div className="text-[11.5px] text-ink-500">{t('me.keySavedFor')}</div>}
+          {backupMsg && <div className="text-[11.5px] text-ink-500 font-display break-all">{backupMsg}</div>}
         </div>
       </div>
     </Section>

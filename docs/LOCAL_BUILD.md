@@ -153,8 +153,31 @@ curl -s localhost:5181/api/computers -H "authorization: Bearer $TOKEN" \
 └── logs/server.log             # the forked server's stdout/stderr
 ```
 
-Backing up the app is copying that directory. `Me → Local server → Show data
-folder` opens it.
+There is no cloud to fall back on, so the app backs itself up:
+
+- **Me → 本地服务 → 备份数据…** asks where to save, stops the embedded server
+  (which closes the database cleanly), writes a zip, and starts it again — a few
+  seconds, the window stays open.
+- **CLI**, with the app closed:
+
+```bash
+node --import tsx scripts/backup-local-data.ts            # → ~/Documents/cumora-backup-<ts>.zip
+node --import tsx scripts/backup-local-data.ts --out ~/x.zip
+```
+
+The archive holds `pgdata/` (the whole database), `uploads/` (avatars and
+attachments), `server.env` and `logs/` — deliberately not whatever else happens
+to sit in the data directory. Restoring is unpacking it back into place:
+
+```bash
+unzip -o ~/Documents/cumora-backup-<ts>.zip -d "$HOME/Library/Application Support/Cumora/local"
+```
+
+The CLI refuses to run while the server is answering, because copying a live
+PGlite directory can produce a torn archive — the in-app button is the
+convenient path when the app is open.
+
+`Me → 本地服务 → 打开数据目录` reveals the directory itself.
 
 Health and logs, without the GUI:
 

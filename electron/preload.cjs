@@ -91,6 +91,8 @@ contextBridge.exposeInMainWorld('cumora', {
     status: () => ipcRenderer.invoke('local-server:status'),
     setOpenAIKey: (key) => ipcRenderer.invoke('local-server:set-openai-key', key),
     restart: () => ipcRenderer.invoke('local-server:restart'),
+    /** Ask where to save, then archive the data directory (server pauses). */
+    backup: () => ipcRenderer.invoke('local-server:backup'),
     openDataDir: () => ipcRenderer.invoke('local-server:open-data-dir'),
     onStatus: (handler) => {
       const wrapped = (_evt, payload) => handler(payload)
