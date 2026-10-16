@@ -33,7 +33,7 @@ const HEALTH_TIMEOUT_MS = 120_000
 const MAX_LOG_LINES = 500
 
 /** Env-var keys the app owns in server.env. */
-const ENV_FILE_KEYS = ['OPENAI_API_KEY', 'AGENT_RUNTIME_SECRET']
+const ENV_FILE_KEYS = ['OPENAI_API_KEY', 'AGENT_RUNTIME_SECRET', 'CUMORA_DURABILITY']
 
 function localDir() {
   return path.join(app.getPath('userData'), 'local')
@@ -134,6 +134,8 @@ class LocalServer {
       detail: this.detail,
       /** True while a backup is in flight (the server is briefly stopped). */
       backingUp: this.backingUp === true,
+      /** Write durability: 'safe' (default) or 'fast' (see server/src/env.ts). */
+      durability: envFile.CUMORA_DURABILITY === 'fast' ? 'fast' : 'safe',
       port: SERVER_PORT,
       hasApiKey: Boolean(envFile.OPENAI_API_KEY),
       dataDir: localDir(),
@@ -179,6 +181,7 @@ class LocalServer {
     fs.mkdirSync(path.join(dir, 'logs'), { recursive: true })
     const envFile = readEnvFile()
     if (envFile.OPENAI_API_KEY) env.OPENAI_API_KEY = envFile.OPENAI_API_KEY
+    if (envFile.CUMORA_DURABILITY) env.CUMORA_DURABILITY = envFile.CUMORA_DURABILITY
     return env
   }
 
@@ -298,6 +301,14 @@ class LocalServer {
       await new Promise((resolve) => setTimeout(resolve, 400))
     }
     return false
+  }
+
+  /** Switch write durability and restart so the server picks it up. */
+  async setDurability(mode) {
+    const value = mode === 'fast' ? 'fast' : 'safe'
+    writeEnvFile({ CUMORA_DURABILITY: value })
+    await this.restart()
+    return this.status()
   }
 
   /** Persist the OpenAI key and restart so the server picks it up. */
