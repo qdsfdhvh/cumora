@@ -18,6 +18,7 @@ import type { en } from './en'
 
 export const zhCN: Partial<Record<keyof typeof en, string>> = {
   // ─── 通用 ─────────────────────────────────────────────────────────
+  'app.starting': '正在启动…',
   'common.close': '关闭',
   'common.use': '使用',
   'common.tryAgain': '重试',

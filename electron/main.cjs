@@ -92,11 +92,27 @@ function visibleRect(saved) {
   return null
 }
 
-// Expose Chrome DevTools Protocol on a fixed port in dev so external
-// debuggers (electron-mcp, chrome://inspect) can attach. MUST be set
-// BEFORE app.whenReady().
-if (isDev) {
-  app.commandLine.appendSwitch('remote-debugging-port', '9222')
+// Expose Chrome DevTools Protocol on a fixed port so external debuggers
+// (electron-mcp, chrome://inspect) can attach. MUST be set BEFORE
+// app.whenReady().
+//
+// Always on in dev; in a packaged build it is opt-in via a marker file in the
+// app's data directory (`touch <userData>/enable-devtools`). The port is
+// loopback-only, but a live CDP session can read the renderer's storage — which
+// holds the session token — so it stays off unless the owner asks for it.
+const devtoolsPort = (() => {
+  if (isDev) return 9222
+  try {
+    const marker = path.join(app.getPath('userData'), 'enable-devtools')
+    if (!fs.existsSync(marker)) return 0
+    // The file may hold a port number; otherwise use the default.
+    const raw = fs.readFileSync(marker, 'utf8').trim()
+    const n = Number.parseInt(raw, 10)
+    return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : 9223
+  } catch { return 0 }
+})()
+if (devtoolsPort) {
+  app.commandLine.appendSwitch('remote-debugging-port', String(devtoolsPort))
 }
 
 /** Cumora's URL scheme. The personal build has no deep-link auth, but the

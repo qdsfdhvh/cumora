@@ -31,6 +31,7 @@ export function AuthScreen() {
   const [savingKey, setSavingKey] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [showServer, setShowServer] = useState(false)
+  const [accountChecked, setAccountChecked] = useState(false)
   const tried = useRef(false)
 
   // Local-server status is Electron-only. Subscribe first, then read the
@@ -44,14 +45,33 @@ export function AuthScreen() {
     return off
   }, [])
 
-  // Who is on this machine already, plus the workspace branding.
+  // Who is on this machine already, plus the workspace branding. The server is
+  // still booting when this screen first paints, so retry until it answers —
+  // otherwise a first-run-looking screen would hide an existing account (and
+  // the auto sign-in below would never fire).
+  const serverReady = !isElectron || status?.state === 'ready'
   useEffect(() => {
+    if (!serverReady) return
     let cancelled = false
-    void api.authProviders()
-      .then((r) => { if (!cancelled) setProviders(r) })
-      .catch(() => { /* server still starting — the Enter button reports it */ })
+    void (async () => {
+      let delay = 300
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const r = await api.authProviders()
+          if (cancelled) return
+          setProviders(r)
+          setAccountChecked(true)
+          return
+        } catch {
+          if (cancelled) return
+          if (attempt >= 12) { setAccountChecked(true); return }
+          await new Promise((resolve) => setTimeout(resolve, delay))
+          delay = Math.min(delay * 1.5, 2_000)
+        }
+      }
+    })()
     return () => { cancelled = true }
-  }, [])
+  }, [serverReady])
 
   const needsKey = isElectron && status !== null && !status.hasApiKey
   const starting = isElectron && status !== null && (status.state === 'starting' || status.state === 'stopped')
@@ -75,12 +95,13 @@ export function AuthScreen() {
   // never races the boot.
   useEffect(() => {
     if (tried.current) return
+    if (!accountChecked) return
     if (!account) return
     if (starting || needsKey) return
     if (localStorage.getItem(SIGNED_OUT_KEY) === '1') return
     tried.current = true
     void enter()
-  }, [account, starting, needsKey])
+  }, [accountChecked, account, starting, needsKey])
 
   async function saveKey() {
     const bridge = window.cumora?.localServer
@@ -173,7 +194,9 @@ export function AuthScreen() {
             : account ? t('auth.continueAs', { name: account.name }) : t('auth.enter')}
         </button>
 
-        {!account && <div className="text-[11px] text-ink-300 text-center">{t('auth.firstRunNote')}</div>}
+        {accountChecked && !account && (
+          <div className="text-[11px] text-ink-300 text-center">{t('auth.firstRunNote')}</div>
+        )}
 
         {status && !needsKey && (
           <div className="text-[11px] text-ink-300 text-center">

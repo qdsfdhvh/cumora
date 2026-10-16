@@ -11,7 +11,8 @@
  *      personal build signs in locally — no OAuth, no cloud).
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import { api } from '@/api/client'
+import { api, ApiError } from '@/api/client'
+import { useT } from '@/lib/i18n'
 import { useAuth } from '@/stores/auth'
 import { isElectron } from '@/lib/runtime'
 import { AuthScreen } from './AuthScreen'
@@ -44,7 +45,9 @@ function consumeOAuthFragment(): CarriedSession | null {
 
 
 export function AuthGate({ children, unauthFallback }: AuthGateProps) {
+  const t = useT()
   const token = useAuth((s) => s.token)
+  const cachedUser = useAuth((s) => s.user)
   const ready = useAuth((s) => s.ready)
   const setSession = useAuth((s) => s.setSession)
   const setMe = useAuth((s) => s.setMe)
@@ -70,28 +73,49 @@ export function AuthGate({ children, unauthFallback }: AuthGateProps) {
     let cancelled = false
     if (!token) { markReady(); return }
     void (async () => {
-      try {
-        const r = await api.authMe()
-        if (cancelled) return
-        setMe(r.user, r.companies, r.activeCompanyId)
-        setServerCapabilities(r.serverCapabilities)
-        markReady()
-      } catch {
-        // Token's bad / expired — clear and route to login.
-        if (!cancelled) clear()
+      // The packaged app renders before its embedded server is listening, so a
+      // boot-time probe can fail with a connection error. That is NOT a bad
+      // session: only a 401 means the token is dead. Anything else retries
+      // (and, if the server stays down, leaves the token alone so the session
+      // survives the next launch).
+      let delay = 300
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const r = await api.authMe()
+          if (cancelled) return
+          setMe(r.user, r.companies, r.activeCompanyId)
+          setServerCapabilities(r.serverCapabilities)
+          markReady()
+          return
+        } catch (e) {
+          if (cancelled) return
+          const unauthorized = e instanceof ApiError && e.status === 401
+          if (unauthorized) { clear(); return }
+          if (attempt >= 12) {
+            // Give up waiting: keep the session (it is not wrong, the server
+            // is just unreachable) and let the shell render its own errors.
+            markReady()
+            return
+          }
+          await new Promise((resolve) => setTimeout(resolve, delay))
+          delay = Math.min(delay * 1.5, 2_000)
+        }
       }
     })()
     return () => { cancelled = true }
   }, [token, setMe, setServerCapabilities, clear, markReady])
 
-  if (!ready) {
+  // Paint the real shell right away when the last session is still on disk:
+  // the probe below only confirms it (and clears it on a 401). Without this the
+  // packaged app shows a blank frame until its embedded server answers.
+  if (!ready && !(token && cachedUser?.id)) {
     // Brief loading flash while we probe — keeps the app from flashing
     // login → main on a valid token reload.
     return (
       <div
         className="fixed inset-0 grid place-items-center text-ink-300 font-display italic text-[13px]"
         style={{ background: 'var(--paper)' }}
-      ><WindowDragStrip />loading…</div>
+      ><WindowDragStrip />{t('app.starting')}</div>
     )
   }
 

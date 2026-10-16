@@ -154,6 +154,42 @@ arrive with `computer_id = NULL` so the next pairing adopts them, and
 starter team. Run it with the app **closed** — the database allows a single
 writer.
 
+## Opening the app
+
+The window paints before the embedded server finishes booting, which used to
+mean a bad first impression: `/auth/me` and `/auth/providers` could fail on a
+connection error, and a failed probe was treated as an expired session — so the
+app looked like a fresh install on every launch and asked you to sign in again.
+
+The renderer and the gate now survive that window:
+
+- the session is **cached** (`cumora.auth.user`, `cumora.auth.companies`), so the
+  first frame already renders the real shell instead of a spinner;
+- the `/auth/me` probe **retries** while the server boots and only clears the
+  session on a real `401` — a transient connection error leaves it alone;
+- the sign-in screen waits for the server, retries `/auth/providers`, and only
+  then decides whether this is really a first run.
+
+So a launch goes straight to the conversations. The sign-in screen appears only
+after an explicit sign-out (remembered in `cumora.auth.signedOut`), and its one
+button signs the local account back in.
+
+### Debugging a running app
+
+The packaged app can expose the renderer's Chrome DevTools Protocol port — off
+by default, because a live CDP session can read localStorage (which holds the
+session token):
+
+```bash
+printf '9223' > "$HOME/Library/Application Support/Cumora/enable-devtools"   # or: touch …
+open /Applications/Cumora.app
+curl -s localhost:9223/json/list          # pick the page target, drive it with CDP
+rm "$HOME/Library/Application Support/Cumora/enable-devtools"               # turn it off
+```
+
+That is how the boot timing above was measured (`Page.reload` plus polling
+`document.body.innerText`).
+
 ## Branding and identity
 
 Everything here is local, so there is no provider to read any of it from:
