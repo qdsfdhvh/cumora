@@ -75,6 +75,24 @@ seeded and unassigned agents are adopted.
 npx cumora@latest agent computer --pair <code> --server http://127.0.0.1:5181 --engine pi --install-service
 ```
 
+**From the app, without a terminal:** Me → Computers → *Add a computer* →
+**自动配置本机**. The renderer mints the pairing code (it is the authenticated
+client) and the main process runs the same CLI — pinned to the app's version,
+with two things done carefully:
+
+- the spawned PATH is **sanitised** first, so session-scoped shims cannot be
+  baked into the LaunchAgent (see "If the agents cannot use `gh`" below);
+- when unsandboxed engines are allowed, the plist gets
+  `CUMORA_BYOA_ALLOW_UNSANDBOXED=1` afterwards and the job is reloaded (the CLI
+  installer does not propagate it, and `launchctl kickstart` does not re-read a
+  plist).
+
+If a computer is already paired to this workspace, the button mints a **repair**
+code for it instead of a fresh pairing code: pairing again would create a second
+computer row and strand the agents assigned to the first one. The copy-paste
+command stays available as the fallback (browser builds, or a Mac without Node —
+the button reports that case instead of failing silently).
+
 `--install-service` writes `~/Library/LaunchAgents/io.cumora.daemon.plist`
 (`RunAtLoad` + `KeepAlive`) so the daemon comes back after a reboot and
 reconnects whenever the app's server is up.
@@ -114,7 +132,13 @@ node --import tsx scripts/fix-daemon-path.ts --reload   # drops session dirs, re
 ```
 
 Re-running `--install-service` from such a shell poisons the PATH again — run
-the fix afterwards, or install the service from a plain terminal.
+the fix afterwards, or install the service from a plain terminal. (The in-app
+button sanitises the PATH for you.)
+
+Note: the daemon's state directory is `~/.cumora`; the *repo* honours
+`CUMORA_CONFIG_DIR` to override it (so a test or a second install can pair
+without touching the running one) — a published CLI older than that change
+ignores it.
 
 ### Pin the daemon version
 

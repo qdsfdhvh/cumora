@@ -178,10 +178,15 @@ async function copyRollout(rollout: Rollout, sourceHome: string, destinationHome
 
 /** Copy an agent's referenced rollout before switching its session pointer.
  * No legacy pointer means there is nothing to migrate (including new users). */
+function defaultSessionsDir(): string {
+  // Same state-directory rule as the daemon (see daemon.ts CONFIG_DIR).
+  return join(process.env.CUMORA_CONFIG_DIR?.trim() || join(homedir(), '.cumora'), 'sessions')
+}
+
 export async function migrateCodexSession(
   agentId: string,
   sourceHome = process.env.CODEX_HOME || join(homedir(), '.codex'),
-  sessionsDir = join(homedir(), '.cumora', 'sessions'),
+  sessionsDir = defaultSessionsDir(),
   destinationHome = codexRuntimeHome(),
 ): Promise<boolean> {
   const legacy = join(sessionsDir, agentId, 'codex.session')
@@ -227,7 +232,7 @@ export async function migrateCodexSession(
  * so one unavailable rollout cannot stop other agents from being hosted. */
 export async function migrateCodexSessions(
   sourceHome?: string,
-  sessionsDir = join(homedir(), '.cumora', 'sessions'),
+  sessionsDir = defaultSessionsDir(),
   destinationHome?: string,
 ): Promise<string[]> {
   const pointers = (await entries(sessionsDir))

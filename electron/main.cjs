@@ -5,6 +5,7 @@ const fs = require('node:fs')
 const { pathToFileURL } = require('node:url')
 const { initialWindowSize } = require('./window-size.cjs')
 const { localServer } = require('./localServer.cjs')
+const { pairThisMachine } = require('./autoPair.cjs')
 
 
 const isDev = !app.isPackaged
@@ -1158,6 +1159,29 @@ ipcMain.handle('local-server:backup', async () => {
   })
   if (canceled || !filePath) return { cancelled: true }
   return await localServer.backupTo(filePath)
+})
+
+/**
+ * Pair this Mac from the app: the renderer mints a pairing code (it holds the
+ * session) and we run the daemon CLI here, streaming its output to the
+ * window. See electron/autoPair.cjs for the PATH and service-env handling.
+ */
+ipcMain.handle('local-server:pair-this-mac', async (_event, options) => {
+  const code = typeof options?.code === 'string' ? options.code.trim() : ''
+  if (!code) return { ok: false, error: 'no_code', hint: 'mint a pairing code first' }
+  return await pairThisMachine({
+    code,
+    serverUrl: `http://127.0.0.1:${localServer.status().port}`,
+    version: app.getVersion(),
+    engine: typeof options?.engine === 'string' && options.engine ? options.engine : null,
+    installService: options?.installService !== false,
+    allowUnsandboxed: options?.allowUnsandboxed === true,
+    onOutput: (line) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('local-server:pair-output', line)
+      }
+    },
+  })
 })
 
 ipcMain.handle('local-server:restart', async () => {
