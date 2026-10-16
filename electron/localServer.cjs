@@ -33,7 +33,19 @@ const HEALTH_TIMEOUT_MS = 120_000
 const MAX_LOG_LINES = 500
 
 /** Env-var keys the app owns in server.env. */
-const ENV_FILE_KEYS = ['OPENAI_API_KEY', 'AGENT_RUNTIME_SECRET', 'CUMORA_DURABILITY']
+const ENV_FILE_KEYS = [
+  'OPENAI_API_KEY',
+  'AGENT_RUNTIME_SECRET',
+  'CUMORA_DURABILITY',
+  // Model service (Me → 本地服务 → 模型服务). Absent ⇒ the OpenAI defaults.
+  // CUMORA_LLM_BASE_URL points the server's own LLM calls at any
+  // OpenAI-compatible endpoint; the OPENAI_MODEL* names go with it.
+  'CUMORA_LLM_BASE_URL',
+  'CUMORA_LLM_API_KEY',
+  'OPENAI_MODEL',
+  'OPENAI_MODEL_SUPPORT',
+  'OPENAI_COMPACTION_MODEL',
+]
 
 function localDir() {
   return path.join(app.getPath('userData'), 'local')
@@ -140,6 +152,14 @@ class LocalServer {
       durability: envFile.CUMORA_DURABILITY === 'fast' ? 'fast' : 'safe',
       port: SERVER_PORT,
       hasApiKey: Boolean(envFile.OPENAI_API_KEY),
+      /** Which model service the server's own LLM calls use. Empty strings
+       *  mean the built-in OpenAI defaults. */
+      llm: {
+        baseUrl: envFile.CUMORA_LLM_BASE_URL ?? '',
+        model: envFile.OPENAI_MODEL ?? '',
+        modelSupport: envFile.OPENAI_MODEL_SUPPORT ?? '',
+        hasKey: Boolean(envFile.CUMORA_LLM_API_KEY || envFile.OPENAI_API_KEY),
+      },
       dataDir: localDir(),
       isDev: !app.isPackaged,
       log: this.logLines.slice(-120),
@@ -182,8 +202,12 @@ class LocalServer {
     }
     fs.mkdirSync(path.join(dir, 'logs'), { recursive: true })
     const envFile = readEnvFile()
-    if (envFile.OPENAI_API_KEY) env.OPENAI_API_KEY = envFile.OPENAI_API_KEY
-    if (envFile.CUMORA_DURABILITY) env.CUMORA_DURABILITY = envFile.CUMORA_DURABILITY
+    // Anything the owner saved from the app overrides the inherited
+    // environment; absent keys leave the server's own defaults in place.
+    for (const key of ENV_FILE_KEYS) {
+      if (key === 'AGENT_RUNTIME_SECRET') continue
+      if (envFile[key]) env[key] = envFile[key]
+    }
     return env
   }
 
@@ -332,6 +356,35 @@ class LocalServer {
   async setOpenAIKey(key) {
     const trimmed = String(key ?? '').trim()
     writeEnvFile({ OPENAI_API_KEY: trimmed })
+    await this.restart()
+    return this.status()
+  }
+
+  /**
+   * Point the server's own LLM calls at another OpenAI-compatible endpoint
+   * (DeepSeek and friends), and restart so it takes effect. The key goes into
+   * CUMORA_LLM_API_KEY when a custom provider is selected, so switching
+   * providers does not overwrite the OpenAI key you may still want.
+   */
+  async setLlmConfig({ baseUrl, model, modelSupport, apiKey }) {
+    const clean = (v) => String(v ?? '').trim()
+    const url = clean(baseUrl).replace(/\/+$/, '')
+    if (url && !/^https?:\/\//i.test(url)) {
+      throw new Error('base URL must start with http:// or https://')
+    }
+    const main = clean(model)
+    const small = clean(modelSupport) || main
+    const patch = {
+      CUMORA_LLM_BASE_URL: url,
+      OPENAI_MODEL: main,
+      OPENAI_MODEL_SUPPORT: small,
+      OPENAI_COMPACTION_MODEL: small,
+    }
+    // OpenAI itself keeps using OPENAI_API_KEY (see server/src/env.ts: the
+    // custom key falls back to it anyway).
+    const key = clean(apiKey)
+    if (key) patch[url ? 'CUMORA_LLM_API_KEY' : 'OPENAI_API_KEY'] = key
+    writeEnvFile(patch)
     await this.restart()
     return this.status()
   }
