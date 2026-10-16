@@ -42,6 +42,7 @@ import { joinAllHands, onboardStarterAgents, seedMemberDms } from '../onboardCom
 import { ogPreview, OgError } from '../og.js'
 import { sendInvitationEmail, type InvitationEmailDelivery } from '../invitation-email.js'
 import { signInLocal } from '../local-auth.js'
+import { normalizeProfilePatch, ProfileValidationError } from '../profile.js'
 import {
   issuePairingCode, pairComputer, announceComputerOnline,
   resolveDevice, mintAgentRuntimeToken, listAgentsForComputer,
@@ -965,6 +966,89 @@ api.get('/me', safe(async (req, res) => {
   if (!rows[0]) { res.status(401).json({ error: 'session points to missing user' }); return }
   res.json({ id: rows[0].id, name: rows[0].display_name, kind: 'human' })
 }))
+
+/* ============== /me — local profile editing ==============
+ *
+ * The cloud build sourced the user's name, email, and avatar from the OAuth
+ * provider that signed them in. The personal build has no provider and no
+ * account to keep in sync, so all three are ordinary local rows the owner can
+ * edit: PATCH /me for the name + email, POST /me/avatar for the picture.
+ */
+
+api.patch('/me', safe(async (req, res) => {
+  const me = requireAuth(req)
+  let patch: ReturnType<typeof normalizeProfilePatch>
+  try {
+    patch = normalizeProfilePatch(req.body)
+  } catch (e) {
+    throw new HttpError(400, e instanceof ProfileValidationError ? e.message : 'invalid profile update')
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    if (patch.email) {
+      // users.email is UNIQUE but case-sensitive, so compare case-insensitively
+      // ourselves — "Local@example.com" and "local@example.com" are one account.
+      const { rows: clash } = await client.query<{ id: string }>(
+        `SELECT id FROM users WHERE LOWER(email) = $1 AND id <> $2 LIMIT 1`,
+        [patch.email, me],
+      )
+      if (clash[0]) throw new HttpError(409, 'another account on this machine already uses that email')
+      await client.query(`UPDATE users SET email = $1 WHERE id = $2`, [patch.email, me])
+      // Keep the local identity's lookup column in step, otherwise the next
+      // sign-in would not recognise this user and would mint a second one.
+      await client.query(
+        `UPDATE user_identities SET email_lower = $1 WHERE user_id = $2 AND provider = 'local'`,
+        [patch.email, me],
+      )
+    }
+    if (patch.displayName) {
+      await client.query(`UPDATE users SET display_name = $1 WHERE id = $2`, [patch.displayName, me])
+      // The name the room sees lives on the participant row (one per company).
+      await client.query(
+        `UPDATE participants SET name = $1, initial = $2 WHERE id = $3`,
+        [patch.displayName, patch.displayName.charAt(0).toUpperCase(), me],
+      )
+    }
+    await client.query('COMMIT')
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => { /* swallow */ })
+    throw e
+  } finally {
+    client.release()
+  }
+
+  const { rows } = await pool.query<{ id: string; email: string; display_name: string; avatar_url: string | null }>(
+    `SELECT id, email, display_name, avatar_url FROM users WHERE id = $1`, [me],
+  )
+  const row = rows[0]
+  res.json({ user: { id: row.id, email: row.email, name: row.display_name, avatarUrl: row.avatar_url } })
+}));
+
+/** Replace the local user's avatar. Same base64 body as POST /uploads, but the
+ *  object is stored under `avatars/` and stamped on both the user row and the
+ *  participant row every room reads. */
+api.post('/me/avatar', requireAuthBeforeLargeBody, uploadJsonParser, safe(async (req, res) => {
+  const me = requireAuth(req)
+  const mime = String(req.body?.mime ?? '').trim().toLowerCase()
+  const dataBase64 = String(req.body?.dataBase64 ?? '')
+  if (!mime || !dataBase64) throw new HttpError(400, 'mime and dataBase64 are required')
+  const policy = MIME_POLICY[mime]
+  if (!policy || policy.kind !== 'img') {
+    throw new HttpError(415, `an image is required (got ${mime || 'nothing'})`)
+  }
+  const buf = Buffer.from(dataBase64, 'base64')
+  if (buf.length === 0) throw new HttpError(400, 'empty image')
+  if (buf.length > MAX_UPLOAD_BYTES) {
+    throw new HttpError(413, `image is larger than ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB`)
+  }
+  const key = `avatars/${me}-${randomUUID().replace(/-/g, '').slice(0, 10)}.${policy.ext}`
+  const url = await storage.put(key, buf, mime)
+  await pool.query(`UPDATE users SET avatar_url = $1 WHERE id = $2`, [url, me])
+  await pool.query(`UPDATE participants SET avatar_url = $1 WHERE id = $2`, [url, me])
+  res.json({ url, key })
+}));
 
 /* ============== Companies (multi-tenant root) ============== */
 
