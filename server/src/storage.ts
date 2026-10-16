@@ -49,7 +49,7 @@ function needsSignature(key: string): boolean {
 }
 
 export function storageKeyFromPublicUrl(raw: string): string | null {
-  return storageKeyFromPublicUrlForBase(raw, env.R2_PUBLIC_BASE)
+  return storageKeyFromPublicUrlForBase(raw, env.R2_PUBLIC_BASE, env.UPLOADS_BASE)
 }
 
 export function messageAttachmentStorageKey(input: { key?: unknown; url?: unknown }): string | null {
@@ -67,8 +67,10 @@ export function signedUrlExpiresSoon(raw: string, leewaySeconds = 300): boolean 
 
 /** Local fallback directory. Same path the static handler historically
  *  served from, so existing /uploads/<file> URLs keep working after the
- *  abstraction lands. */
-export const UPLOAD_DIR = resolve(process.cwd(), 'server/uploads')
+ *  abstraction lands. The packaged app overrides it with
+ *  CUMORA_UPLOAD_DIR so attachments live beside its database under
+ *  Application Support instead of inside the (read-only) app bundle. */
+export const UPLOAD_DIR = env.UPLOAD_DIR_OVERRIDE || resolve(process.cwd(), 'server/uploads')
 
 /** One enumerated object. lastModifiedMs is the storage backend's notion
  *  of when the object was last written — GC uses it to spare keys that
@@ -108,8 +110,9 @@ class LocalStorage implements Storage {
     const path = join(UPLOAD_DIR, key)
     await mkdir(dirname(path), { recursive: true })
     await writeFile(path, body)
-    // Existing static handler mounts UPLOAD_DIR at /uploads/.
-    return `/uploads/${key}`
+    // Existing static handler mounts UPLOAD_DIR at /uploads/. Absolute when
+    // UPLOADS_BASE is configured (packaged app: renderer runs on app://).
+    return `${env.UPLOADS_BASE}/uploads/${key}`
   }
 
   // Local mode has no real presign — the browser still goes through
@@ -121,7 +124,7 @@ class LocalStorage implements Storage {
   }
 
   async publicUrl(key: string): Promise<string> {
-    return `/uploads/${key}`
+    return `${env.UPLOADS_BASE}/uploads/${key}`
   }
 
   async listObjectsByPrefix(prefix: string): Promise<StorageObject[]> {

@@ -236,6 +236,14 @@ export const env = {
   /** Uploads directory override (embedded mode stores uploads under the
    *  app's Application Support directory instead of server/uploads). */
   UPLOAD_DIR_OVERRIDE: process.env.CUMORA_UPLOAD_DIR ?? '',
+  /**
+   * Origin used to build ABSOLUTE /uploads URLs in local-storage mode.
+   * The packaged app's renderer is served from `app://cumora`, where a
+   * relative `/uploads/...` would resolve against the app scheme and 404 —
+   * so the desktop app sets this to `http://127.0.0.1:<port>`. Left blank
+   * (dev, same-origin static deploys) URLs stay relative.
+   */
+  UPLOADS_BASE: (process.env.CUMORA_UPLOADS_BASE ?? '').replace(/\/+$/, ''),
   /** Enable POST /api/auth/local (single-user local sign-in). The packaged
    *  app sets this; a plain server deploy leaves it off. */
   LOCAL_AUTH: ['1', 'true', 'yes', 'on'].includes((process.env.CUMORA_LOCAL_AUTH ?? '').toLowerCase()),

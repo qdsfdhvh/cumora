@@ -28,12 +28,27 @@ export function normalizeStorageKey(raw: string): string | null {
 
 /** Derive a storage key only from a local upload URL or the configured R2
  * public origin. Arbitrary absolute URLs are never storage references. */
-export function storageKeyFromPublicUrl(raw: string, r2PublicBase: string): string | null {
+export function storageKeyFromPublicUrl(raw: string, r2PublicBase: string, uploadsBase = ''): string | null {
   const value = raw.trim()
   if (!value) return null
 
   if (value.startsWith('/uploads/')) {
     return normalizeStorageKey(value.slice('/uploads/'.length))
+  }
+
+  // Absolute local-storage URL (`http://127.0.0.1:<port>/uploads/<key>`) when
+  // the desktop app configured CUMORA_UPLOADS_BASE, as well as the relative
+  // form above.
+  if (uploadsBase) {
+    try {
+      const url = new URL(value)
+      const base = new URL(uploadsBase)
+      if (url.origin === base.origin && url.pathname.startsWith('/uploads/')) {
+        return normalizeStorageKey(url.pathname.slice('/uploads/'.length))
+      }
+    } catch {
+      // fall through to the R2 rules below
+    }
   }
 
   if (!r2PublicBase) return null
@@ -61,10 +76,11 @@ export function storageKeyFromPublicUrl(raw: string, r2PublicBase: string): stri
 export function messageAttachmentStorageKey(
   input: { key?: unknown; url?: unknown },
   r2PublicBase: string,
+  uploadsBase = '',
 ): string | null {
   const rawKey = typeof input.key === 'string' ? input.key.trim() : ''
   const fromUrl = typeof input.url === 'string'
-    ? storageKeyFromPublicUrl(input.url, r2PublicBase)
+    ? storageKeyFromPublicUrl(input.url, r2PublicBase, uploadsBase)
     : null
 
   if (rawKey) {

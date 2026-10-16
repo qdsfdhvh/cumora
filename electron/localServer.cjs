@@ -163,6 +163,9 @@ class LocalServer {
       // Embedded data + auth defaults for a single-user local install.
       CUMORA_DATA_DIR: dir,
       CUMORA_UPLOAD_DIR: path.join(dir, 'uploads'),
+      // Absolute /uploads URLs — the renderer runs on app://cumora, where a
+      // relative path would resolve against the app scheme and 404.
+      CUMORA_UPLOADS_BASE: `http://127.0.0.1:${SERVER_PORT}`,
       CUMORA_LOCAL_AUTH: '1',
       // The renderer is served from app://cumora in production and
       // http://localhost:5180 in dev — both must pass CORS.

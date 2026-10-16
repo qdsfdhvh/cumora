@@ -36,6 +36,24 @@ pairing command, and run it once. It pairs the machine, seeds the starter team,
 and assigns each agent one of your local engines (Claude Code, Codex, Cursor,
 OpenCode, pi, Gemini CLI, …).
 
+### Migrating an existing Cumora Cloud workspace (one-off)
+
+If you previously used the cloud app, this account's workspace can be pulled
+into the local database — participants, conversations, messages, avatars, and
+attachment images (the only step that touches the network, and it is
+read-only):
+
+```bash
+CUMORA_DATA_DIR="$HOME/Library/Application Support/Cumora/local" \
+CUMORA_UPLOADS_BASE=http://127.0.0.1:5181 \
+CUMORA_CLOUD_TOKEN=<session token> CUMORA_CLOUD_COMPANY=co-xxxxxxxx \
+node --import tsx scripts/import-cloud-workspace.ts --display-name=Seiko
+```
+
+Re-running is safe (idempotent). Agents arrive unassigned and are adopted by
+the machine you pair, and starter-team seeding is suppressed so the imported
+roster is not duplicated.
+
 ### Data
 
 Everything lives in one directory — back it up by copying it:

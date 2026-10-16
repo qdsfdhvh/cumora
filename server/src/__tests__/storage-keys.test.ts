@@ -85,3 +85,28 @@ test('public URL parsing is pinned to the configured origin and base path', () =
     null,
   )
 })
+
+// The personal build stores uploads on disk and (in the packaged app) hands
+// the renderer ABSOLUTE local URLs, because the renderer origin is
+// `app://cumora` where a relative `/uploads/...` cannot resolve.
+test('absolute local uploads URLs map back to keys when an uploads base is set', () => {
+  const base = 'http://127.0.0.1:5181'
+  assert.equal(
+    storageKeyFromPublicUrl(`${base}/uploads/attachments/photo.jpg`, '', base),
+    'attachments/photo.jpg',
+  )
+  assert.equal(
+    storageKeyFromPublicUrl('http://127.0.0.1:9999/uploads/attachments/photo.jpg', '', base),
+    null,
+    'a different origin must not be treated as local storage',
+  )
+  assert.equal(
+    messageAttachmentStorageKey({ url: `${base}/uploads/attachments/photo.jpg` }, '', base),
+    'attachments/photo.jpg',
+  )
+  // Without the base configured, behaviour is unchanged (relative only).
+  assert.equal(
+    storageKeyFromPublicUrl(`${base}/uploads/attachments/photo.jpg`, ''),
+    null,
+  )
+})
