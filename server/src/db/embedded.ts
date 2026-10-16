@@ -32,6 +32,7 @@
  * real PostgreSQL — this module is inert there.
  */
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg'
+import { quarantineFreeSpaceMaps } from './pglite-repair.js'
 
 /** Minimal structural type for anything the server passes as `values`. */
 type ParamList = unknown[] | undefined
@@ -86,16 +87,52 @@ async function openPglite(): Promise<PGliteLike> {
   return db as unknown as PGliteLike
 }
 
+/**
+ * Open PGlite, self-healing ONE specific failure mode: a hard kill can leave
+ * an FSM page whose LSN sits past the truncated end of the WAL, which makes
+ * Postgres abort startup with "xlog flush request … is not satisfied". FSM
+ * contents are disposable (Postgres rebuilds them), so quarantine them and
+ * retry once. Anything else bubbles up untouched — a real corruption must not
+ * be papered over.
+ */
+async function openPgliteWithRepair(): Promise<PGliteLike> {
+  try {
+    return await openPglite()
+  } catch (err) {
+    let quarantined: string | null = null
+    try {
+      quarantined = await quarantineFreeSpaceMaps(dataDir())
+    } catch { /* fall through and rethrow the original error */ }
+    if (!quarantined) throw err
+    console.warn(
+      `[embedded-pg] startup failed (${err instanceof Error ? err.message : String(err)}); ` +
+      `moved free-space-map files to ${quarantined} and retrying — Postgres rebuilds them on demand`,
+    )
+    return await openPglite()
+  }
+}
+
 /** The shared PGlite handle, opened on first use. */
 function pglite(): Promise<PGliteLike> {
   if (!pglitePromise) {
-    pglitePromise = openPglite().catch((e) => {
+    pglitePromise = openPgliteWithRepair().catch((e) => {
       pglitePromise = null
       throw e
     })
   }
   return pglitePromise
 }
+
+/** Statement timeouts for the embedded backend. A single backend means one
+ *  runaway query freezes the whole app (no event loop, no HTTP), so every
+ *  statement gets a hard ceiling here — and anything slow enough to notice is
+ *  logged with its SQL so the next reader can find it.
+ *
+ *  Migrations run their own long statements (index builds) and explicitly
+ *  `SET statement_timeout = 0` on their session; bootEmbeddedInfra restores
+ *  the ceiling afterwards. */
+const STATEMENT_TIMEOUT_MS = Number(process.env.CUMORA_EMBEDDED_STATEMENT_TIMEOUT_MS ?? 30_000)
+const SLOW_QUERY_MS = Number(process.env.CUMORA_EMBEDDED_SLOW_QUERY_MS ?? 3_000)
 
 /** Awaited by index.ts so boot logs order correctly. In embedded mode this
  *  also runs the schema migrations — the packaged app has no separate
@@ -111,6 +148,10 @@ export async function bootEmbeddedInfra(): Promise<void> {
   const t0 = Date.now()
   const { ensureSchema } = await import('./migrate.js')
   await ensureSchema()
+  // Migrations clear their session's timeouts; restore ours for the app.
+  if (STATEMENT_TIMEOUT_MS > 0) {
+    await db.query(`SET statement_timeout = ${Math.floor(STATEMENT_TIMEOUT_MS)}`)
+  }
   console.log(`[embedded-pg] schema ready in ${Date.now() - t0}ms`)
 }
 
@@ -185,6 +226,22 @@ async function runSql(
   owner: symbol,
 ): Promise<QueryResult<QueryResultRow>> {
   const db = await pglite()
+  const started = Date.now()
+  try {
+    return await runSqlInner(db, sql, params)
+  } finally {
+    const ms = Date.now() - started
+    if (SLOW_QUERY_MS > 0 && ms >= SLOW_QUERY_MS) {
+      console.warn(`[embedded-pg] slow query ${ms}ms: ${sql.replace(/\s+/g, ' ').trim().slice(0, 400)}`)
+    }
+  }
+}
+
+async function runSqlInner(
+  db: PGliteLike,
+  sql: string,
+  params: ParamList,
+): Promise<QueryResult<QueryResultRow>> {
   if (params && params.length > 0) {
     const r = await db.query(sql, params)
     return {
