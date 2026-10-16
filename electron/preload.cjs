@@ -94,6 +94,7 @@ contextBridge.exposeInMainWorld('cumora', {
     /** 'safe' (flush every commit) or 'fast' (may lose the last commits on a crash). */
     setDurability: (mode) => ipcRenderer.invoke('local-server:set-durability', mode),
     setLlmConfig: (config) => ipcRenderer.invoke('local-server:set-llm-config', config),
+    setBackupConfig: (config) => ipcRenderer.invoke('local-server:set-backup-config', config),
     /** Ask where to save, then archive the data directory (server pauses). */
     backup: () => ipcRenderer.invoke('local-server:backup'),
     /** Pair this Mac: runs the daemon CLI with the code the app minted. */

@@ -21,6 +21,7 @@ interface LocalServerLike {
   status: () => {
     state: string; detail: string; port: number; hasApiKey: boolean
     dataDir: string; isDev: boolean; log: string[]
+    backups?: { auto: string; keep: number; lastAt: string | null; lastBytes: number; lastError: string | null }
   }
   serverEnv: () => Record<string, string>
   setStatusHandler: (fn: (s: unknown) => void) => void
@@ -30,6 +31,8 @@ interface LocalServerLike {
 
 let dir: string
 let localServer: LocalServerLike
+let isBackupDue: (state: { auto?: string; lastAt?: string | null } | undefined, nowMs: number) => boolean
+let backupsToDelete: (names: string[], keep: number) => string[]
 
 const moduleAny = Module as unknown as {
   _load: (request: string, parent: unknown, isMain: boolean) => unknown
@@ -49,7 +52,10 @@ before(() => {
     return original.call(this, request, parent, isMain)
   }
   const require = createRequire(import.meta.url)
-  localServer = require(join(process.cwd(), 'electron', 'localServer.cjs')).localServer as LocalServerLike
+  const mod = require(join(process.cwd(), 'electron', 'localServer.cjs'))
+  localServer = mod.localServer as LocalServerLike
+  isBackupDue = mod.isBackupDue
+  backupsToDelete = mod.backupsToDelete
 })
 
 after(() => {
@@ -95,4 +101,49 @@ test('an OpenAI key in server.env is reported and passed to the server', () => {
   const s = localServer.status()
   assert.equal(s.hasApiKey, true)
   assert.equal(localServer.serverEnv().OPENAI_API_KEY, 'sk-test-123')
+})
+
+test('automatic backups are off until asked for, and off means never due', () => {
+  // Default state: no schedule, so a launch must not write anything.
+  const fresh = { auto: 'off', lastAt: null }
+  assert.equal(isBackupDue(fresh, Date.now()), false)
+  assert.equal(isBackupDue({ auto: 'daily', lastAt: null }, Date.now()), true, 'enabling it should run one')
+  assert.equal(isBackupDue(undefined, Date.now()), false)
+})
+
+test('isBackupDue honours daily/weekly cadence', () => {
+  const now = Date.parse('2026-10-16T12:00:00.000Z')
+  const hours = (n: number) => new Date(now - n * 3_600_000).toISOString()
+  assert.equal(isBackupDue({ auto: 'daily', lastAt: hours(23) }, now), false)
+  assert.equal(isBackupDue({ auto: 'daily', lastAt: hours(25) }, now), true)
+  assert.equal(isBackupDue({ auto: 'weekly', lastAt: hours(24 * 6) }, now), false)
+  assert.equal(isBackupDue({ auto: 'weekly', lastAt: hours(24 * 8) }, now), true)
+  // An unparseable stamp must not wedge the schedule forever.
+  assert.equal(isBackupDue({ auto: 'daily', lastAt: 'not-a-date' }, now), true)
+})
+
+test('backupsToDelete rotates oldest-first and ignores foreign files', () => {
+  const names = [
+    'cumora-2026-10-14T10-00-00.zip',
+    'cumora-2026-10-16T10-00-00.zip',
+    'cumora-2026-10-15T10-00-00.zip',
+    'cumora-cloud-0.18.7-backup.zip', // not ours — must survive
+    'notes.txt',
+  ]
+  assert.deepEqual(backupsToDelete(names, 2), ['cumora-2026-10-14T10-00-00.zip'])
+  assert.deepEqual(backupsToDelete(names, 3), [])
+  assert.deepEqual(backupsToDelete(names, 1), ['cumora-2026-10-14T10-00-00.zip', 'cumora-2026-10-15T10-00-00.zip'])
+  // A missing/garbage retention falls back to the default rather than deleting
+  // everything; a nonsensical negative is clamped to keeping one.
+  assert.deepEqual(backupsToDelete(names, Number.NaN), [])
+  assert.deepEqual(backupsToDelete(names, 0), [])
+  assert.deepEqual(backupsToDelete(names, -5), ['cumora-2026-10-14T10-00-00.zip', 'cumora-2026-10-15T10-00-00.zip'])
+})
+
+test('status() reports the backup schedule (off by default)', () => {
+  const b = localServer.status().backups
+  assert.ok(b, 'status must expose the backup state')
+  assert.equal(b.auto, 'off')
+  assert.ok(b.keep >= 1)
+  assert.equal(b.lastAt, null)
 })
