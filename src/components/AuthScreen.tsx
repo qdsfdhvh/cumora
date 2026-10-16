@@ -19,6 +19,7 @@ import { api, getServerOrigin, setServerOrigin } from '@/api/client'
 import { isElectron, type LocalServerStatus } from '@/lib/runtime'
 import { useAuth, SIGNED_OUT_KEY } from '@/stores/auth'
 import { CloudLogo } from './Avatar'
+import { LocalKeyPrompt } from './LocalKeyPrompt'
 import { WindowDragStrip } from './WindowDragStrip'
 import { useT } from '@/lib/i18n'
 
@@ -26,9 +27,7 @@ export function AuthScreen() {
   const t = useT()
   const [status, setStatus] = useState<LocalServerStatus | null>(null)
   const [providers, setProviders] = useState<Awaited<ReturnType<typeof api.authProviders>> | null>(null)
-  const [keyInput, setKeyInput] = useState('')
   const [busy, setBusy] = useState(false)
-  const [savingKey, setSavingKey] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [showServer, setShowServer] = useState(false)
   const [accountChecked, setAccountChecked] = useState(false)
@@ -103,21 +102,6 @@ export function AuthScreen() {
     void enter()
   }, [accountChecked, account, starting, needsKey])
 
-  async function saveKey() {
-    const bridge = window.cumora?.localServer
-    if (!bridge || !keyInput.trim()) return
-    setSavingKey(true)
-    setErr(null)
-    try {
-      setStatus(await bridge.setOpenAIKey(keyInput.trim()))
-      setKeyInput('')
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSavingKey(false)
-    }
-  }
-
   const autoEntering = account !== null && !needsKey && !starting
     && localStorage.getItem(SIGNED_OUT_KEY) !== '1'
 
@@ -144,29 +128,10 @@ export function AuthScreen() {
           <div className="font-display italic text-[13px] text-ink-400 mt-1">{t('auth.localSub')}</div>
         </div>
 
-        {needsKey && (
-          <div className="w-full border border-ink-100 rounded-[12px] p-4 bg-cloud flex flex-col gap-2">
-            <div className="font-display text-[14px] text-ink-900">{t('auth.openaiTitle')}</div>
-            <div className="text-[11.5px] text-ink-500 leading-relaxed">{t('auth.openaiHint')}</div>
-            <input
-              type="password"
-              value={keyInput}
-              onChange={(e) => setKeyInput(e.target.value)}
-              placeholder={t('auth.openaiPlaceholder')}
-              spellCheck={false}
-              autoComplete="off"
-              className="h-10 px-3 rounded-[8px] border border-ink-100 bg-paper text-ink-900 placeholder:text-ink-300 text-[13px] focus:outline-none focus:border-sky2-300"
-            />
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={saveKey}
-                disabled={savingKey || !keyInput.trim()}
-                className="h-9 px-3 rounded-[8px] bg-skype hover:bg-skype-deep text-white text-[12.5px] disabled:opacity-40"
-              >
-                {savingKey ? t('auth.preparing') : t('auth.saveKey')}
-              </button>
-            </div>
+        {isElectron && needsKey && (
+          <div className="w-full border border-ink-100 rounded-[12px] p-4 bg-cloud">
+            <div className="font-display text-[14px] text-ink-900 mb-2">{t('auth.openaiTitle')}</div>
+            <LocalKeyPrompt status={status} onSaved={setStatus} />
           </div>
         )}
 

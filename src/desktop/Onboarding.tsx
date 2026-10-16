@@ -8,6 +8,8 @@ import { useAuth } from '@/stores/auth'
 import { usePairingCodes } from '@/stores/pairing-codes'
 import { copyText } from '@/lib/clipboard'
 import { AutoPairAction } from '@/components/AutoPairAction'
+import { LocalKeyPrompt } from '@/components/LocalKeyPrompt'
+import type { LocalServerStatus } from '@/lib/runtime'
 
 /**
  * First-run gate for free-tier users: their agents run on their own machine
@@ -29,6 +31,18 @@ export function Onboarding() {
   // append `--engine claude` so a Claude-less machine still auto-detects rather
   // than erroring on a Claude it doesn't have.
   const [engine, setEngine] = useState<RunnableEngineId>('claude')
+  // Step ① of the wizard: the key the server's agent brains use. Subscribed
+  // here rather than passed in, so saving it flips this card to "configured"
+  // without leaving the screen.
+  const [keyStatus, setKeyStatus] = useState<LocalServerStatus | null>(null)
+  useEffect(() => {
+    const bridge = window.cumora?.localServer
+    if (!bridge) return
+    const off = bridge.onStatus(setKeyStatus)
+    void bridge.status().then(setKeyStatus).catch(() => { /* server not up yet */ })
+    return off
+  }, [])
+  const keyConfigured = keyStatus?.hasApiKey === true
   // Default to installing the always-on service: it auto-starts at sign-in,
   // auto-restarts on crash, and auto-updates — so the user isn't tied to a
   // terminal that must stay open. Appends `--install-service` to the command.
@@ -107,6 +121,14 @@ export function Onboarding() {
           {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static copy from the locale bundle, not user input */}
           <p className="text-[14.5px] text-ink-600 leading-relaxed mb-6 max-w-[560px]" dangerouslySetInnerHTML={{ __html: t('onboard.body') }} />
 
+          <section className="bg-cloud rounded-[16px] p-5 mb-4" style={{ border: '1px solid var(--ink-100)' }}>
+            <h2 className="font-display text-[14px] text-ink-900 mb-2">{t('onboard.stepKey')}</h2>
+            <LocalKeyPrompt status={keyStatus} onSaved={setKeyStatus} />
+          </section>
+
+          <h2 className="font-display text-[14px] text-ink-900 mb-2">
+            {keyConfigured ? t('onboard.stepPairFirst') : t('onboard.stepPair')}
+          </h2>
           <div className="bg-cloud rounded-[16px] p-5" style={{ border: '1px solid var(--ink-100)' }}>
             {!code ? (
               <>
@@ -177,10 +199,6 @@ export function Onboarding() {
               </button>
             </section>
           )}
-
-          <p className="text-[12px] text-ink-400 mt-4">
-            {t('onboard.cloudCta')} <span className="text-skype-deep">{t('onboard.upgradePro')}</span> {t('onboard.cloudRun')}
-          </p>
         </div>
       </main>
     </div>
