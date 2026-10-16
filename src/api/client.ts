@@ -581,7 +581,7 @@ export interface ApiAgentWorkspaceFileContent extends ApiAgentWorkspaceFile {
 
 interface MeResponse {
   user: { id: string; email: string; name: string; emailVerified: boolean; providers: string[] }
-  companies: Array<{ id: string; name: string; slug: string; role: string; tier?: string }>
+  companies: Array<{ id: string; name: string; slug: string; role: string; tier?: string; logoUrl?: string | null }>
   activeCompanyId: string | null
   serverCapabilities: ServerCapabilities
 }
@@ -826,6 +826,22 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary)
 }
 
+/** POST an image to an avatar endpoint (the local user's or an agent's). */
+async function postImage(path: string, file: File): Promise<{ url: string; key: string }> {
+  const caps = await api.uploadCapabilities()
+  if (caps.maxBytes && file.size > caps.maxBytes) {
+    throw new Error(`image too large: ${Math.round(file.size / 1024 / 1024)}MB (max ${Math.round(caps.maxBytes / 1024 / 1024)}MB)`)
+  }
+  return http<{ url: string; key: string }>(path, {
+    method: 'POST',
+    body: JSON.stringify({
+      name: file.name,
+      mime: file.type || 'application/octet-stream',
+      dataBase64: await fileToBase64(file),
+    }),
+  })
+}
+
 export const api = {
   health: () => http<{ ok: boolean; ts: number }>('/health'),
   me: () => http<{ id: string; name: string; kind: string }>('/me'),
@@ -844,21 +860,26 @@ export const api = {
       '/me',
       { method: 'PATCH', body: JSON.stringify(input) },
     ),
-  /** Replace the avatar with an uploaded image (`POST /me/avatar`). */
-  uploadAvatar: async (file: File): Promise<{ url: string; key: string }> => {
-    const caps = await api.uploadCapabilities()
-    if (caps.maxBytes && file.size > caps.maxBytes) {
-      throw new Error(`image too large: ${Math.round(file.size / 1024 / 1024)}MB (max ${Math.round(caps.maxBytes / 1024 / 1024)}MB)`)
-    }
-    return http<{ url: string; key: string }>('/me/avatar', {
+  /** Replace YOUR avatar with an uploaded image (`POST /me/avatar`). */
+  uploadAvatar: (file: File) => postImage('/me/avatar', file),
+  /** Replace an AGENT's portrait with an uploaded image. */
+  uploadAgentAvatar: (id: string, file: File) =>
+    postImage(`/agents/${encodeURIComponent(id)}/avatar`, file),
+  /** Rename the workspace (owner/admin). */
+  updateWorkspace: (id: string, input: { name: string }) =>
+    http<{ id: string; name: string }>(`/companies/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  /** Set the workspace logo from an uploaded image. */
+  uploadWorkspaceLogo: (id: string, file: File) =>
+    postImage(`/companies/${encodeURIComponent(id)}/logo`, file),
+  /** Drop the custom logo and fall back to the built-in mark. */
+  clearWorkspaceLogo: (id: string) =>
+    http<{ url: string | null }>(`/companies/${encodeURIComponent(id)}/logo`, {
       method: 'POST',
-      body: JSON.stringify({
-        name: file.name,
-        mime: file.type || 'application/octet-stream',
-        dataBase64: await fileToBase64(file),
-      }),
-    })
-  },
+      body: JSON.stringify({ clear: true }),
+    }),
   authLogout: () =>
     http<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
   /** Permanently delete the signed-in user's account. Soft-deletes
@@ -877,7 +898,7 @@ export const api = {
   getQuota: () =>
     http<ApiQuotaResponse>('/me/quota'),
   listCompanies: () =>
-    http<Array<{ id: string; name: string; slug: string; createdAt: string; role: string }>>('/companies'),
+    http<Array<{ id: string; name: string; slug: string; logoUrl: string | null; createdAt: string; role: string }>>('/companies'),
   listProjects: () => http<ApiProject[]>('/projects'),
   getShippingOverview: () => http<ShippingOverview>('/shipping/overview'),
   getShippingFeature: (id: string) => http<ShippingFeatureDetail>(`/shipping/features/${encodeURIComponent(id)}`),
@@ -1354,7 +1375,15 @@ export const api = {
     http<ApiConveneTranscript[]>(`/convene/${encodeURIComponent(sessionId)}/transcript`),
   /** Browser sign-in providers this deployment has credentials for. Used to
    *  avoid rendering a button that can only 503. */
-  authProviders: () => http<{ providers: string[]; local?: boolean }>('/auth/providers'),
+  authProviders: () => http<{
+    providers: string[]
+    local?: boolean
+    /** The machine's local account, when one already exists (so the sign-in
+     *  screen can show who it is instead of a setup form). */
+    account?: { name: string; email: string; avatarUrl: string | null } | null
+    /** Workspace branding, so the sign-in screen can wear the owner's logo. */
+    branding?: { workspaceName: string; logoUrl: string | null } | null
+  }>('/auth/providers'),
   getPreferences: () => http<Record<string, unknown>>('/me/preferences'),
   putPreferences: (prefs: Record<string, unknown>) =>
     http<{ ok: boolean }>('/me/preferences', { method: 'PUT', body: JSON.stringify(prefs) }),

@@ -59,6 +59,44 @@ async function findLocalUser(): Promise<LocalUserRow | null> {
   return byEmail.rows[0] ?? null
 }
 
+/** What the sign-in screen may show before anyone signs in: the machine's
+ *  local account (if it exists) and its workspace branding. Safe on loopback —
+ *  the server refuses non-loopback clients in embedded mode. */
+export interface LocalAccountSummary {
+  name: string
+  email: string
+  avatarUrl: string | null
+  workspaceName: string
+  workspaceLogoUrl: string | null
+}
+
+export async function getLocalAccountSummary(): Promise<LocalAccountSummary | null> {
+  const { rows } = await pool.query<{
+    display_name: string; email: string; avatar_url: string | null
+    company_name: string | null; logo_url: string | null
+  }>(
+    `SELECT u.display_name, u.email, u.avatar_url,
+            c.name AS company_name, c.logo_url
+       FROM user_identities ui
+       JOIN users u ON u.id = ui.user_id
+       LEFT JOIN company_members cm ON cm.user_id = u.id
+       LEFT JOIN companies c ON c.id = cm.company_id
+      WHERE ui.provider = $1
+      ORDER BY ui.created_at ASC, cm.joined_at ASC
+      LIMIT 1`,
+    [LOCAL_PROVIDER],
+  )
+  const row = rows[0]
+  if (!row) return null
+  return {
+    name: row.display_name,
+    email: row.email,
+    avatarUrl: row.avatar_url,
+    workspaceName: row.company_name ?? '',
+    workspaceLogoUrl: row.logo_url ?? null,
+  }
+}
+
 export interface LocalAuthResult {
   token: string
   expiresAt: Date

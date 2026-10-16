@@ -1,36 +1,37 @@
 /**
  * Sign-in screen — personal local build.
  *
- * There is no cloud account to sign into and no OAuth provider to visit.
- * The desktop app runs its own server + database on this Mac, so this
- * screen does two things:
+ * There is no cloud account and no provider to visit. Two things happen here:
  *
- *   1. First run: collect the OpenAI key the server's agent brains use.
- *      The key is handed to the Electron main process, which stores it in
- *      the app's Application Support directory and restarts the local
- *      server with it. "Skip for now" is allowed — chat, boards, docs and
- *      calendar all work; only the LLM-backed agent features wait.
- *   2. Enter: POST /api/auth/local, which find-or-creates the machine's
- *      single local user and mints a normal session. No password, no
- *      provider, no network egress.
+ *   1. First run: collect the OpenAI key the agent brains use. The key goes to
+ *      the Electron main process, which stores it in the app's data directory
+ *      and restarts the local server with it. "Skip for now" is allowed.
+ *   2. Enter: POST /api/auth/local, which find-or-creates the machine's single
+ *      local user and mints a session.
+ *
+ * When the local account already exists the screen is skipped entirely: nobody
+ * wants to be asked their name on every launch — it is editable in Me →
+ * profile — so the sign-in happens automatically unless the owner signed out
+ * on purpose (that intent is remembered in localStorage).
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, getServerOrigin, setServerOrigin } from '@/api/client'
 import { isElectron, type LocalServerStatus } from '@/lib/runtime'
-import { useAuth } from '@/stores/auth'
+import { useAuth, SIGNED_OUT_KEY } from '@/stores/auth'
 import { CloudLogo } from './Avatar'
 import { WindowDragStrip } from './WindowDragStrip'
 import { useT } from '@/lib/i18n'
 
 export function AuthScreen() {
   const t = useT()
-  const [name, setName] = useState('')
-  const [keyInput, setKeyInput] = useState('')
   const [status, setStatus] = useState<LocalServerStatus | null>(null)
+  const [providers, setProviders] = useState<Awaited<ReturnType<typeof api.authProviders>> | null>(null)
+  const [keyInput, setKeyInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [savingKey, setSavingKey] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [showServer, setShowServer] = useState(false)
+  const tried = useRef(false)
 
   // Local-server status is Electron-only. Subscribe first, then read the
   // current snapshot, so the first-run card reflects reality even if the
@@ -43,8 +44,43 @@ export function AuthScreen() {
     return off
   }, [])
 
+  // Who is on this machine already, plus the workspace branding.
+  useEffect(() => {
+    let cancelled = false
+    void api.authProviders()
+      .then((r) => { if (!cancelled) setProviders(r) })
+      .catch(() => { /* server still starting — the Enter button reports it */ })
+    return () => { cancelled = true }
+  }, [])
+
   const needsKey = isElectron && status !== null && !status.hasApiKey
   const starting = isElectron && status !== null && (status.state === 'starting' || status.state === 'stopped')
+  const account = providers?.account ?? null
+  const branding = providers?.branding ?? null
+
+  async function enter() {
+    setBusy(true)
+    setErr(null)
+    try {
+      const r = await api.authLocal(null)
+      useAuth.getState().setSession(r.token, { id: r.user.id, email: r.user.email, name: r.user.displayName }, r.companyId)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+      setBusy(false)
+    }
+  }
+
+  // The account exists and the owner didn't sign out → just go in. Wait for
+  // the server (and, on first run, for the key form to be resolved) so this
+  // never races the boot.
+  useEffect(() => {
+    if (tried.current) return
+    if (!account) return
+    if (starting || needsKey) return
+    if (localStorage.getItem(SIGNED_OUT_KEY) === '1') return
+    tried.current = true
+    void enter()
+  }, [account, starting, needsKey])
 
   async function saveKey() {
     const bridge = window.cumora?.localServer
@@ -52,8 +88,7 @@ export function AuthScreen() {
     setSavingKey(true)
     setErr(null)
     try {
-      const next = await bridge.setOpenAIKey(keyInput.trim())
-      setStatus(next)
+      setStatus(await bridge.setOpenAIKey(keyInput.trim()))
       setKeyInput('')
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
@@ -62,25 +97,29 @@ export function AuthScreen() {
     }
   }
 
-  async function enter() {
-    setBusy(true)
-    setErr(null)
-    try {
-      const r = await api.authLocal(name.trim() || null)
-      useAuth.getState().setSession(r.token, { id: r.user.id, email: r.user.email, name: r.user.displayName }, r.companyId)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e))
-      setBusy(false)
-    }
-  }
+  const autoEntering = account !== null && !needsKey && !starting
+    && localStorage.getItem(SIGNED_OUT_KEY) !== '1'
 
   return (
     <div className="fixed inset-0 grid place-items-center overflow-auto" style={{ background: 'var(--paper)' }}>
       <WindowDragStrip />
       <div className="w-[360px] flex flex-col items-center gap-6 py-10">
-        <CloudLogo size={64} />
+        {branding?.logoUrl
+          ? (
+            <img
+              src={branding.logoUrl}
+              alt={branding.workspaceName || 'Cumora'}
+              width={64}
+              height={64}
+              className="rounded-[16px] object-cover"
+              style={{ width: 64, height: 64 }}
+            />
+          )
+          : <CloudLogo size={64} />}
         <div className="text-center">
-          <div className="font-display text-[22px] text-ink-900">{t('auth.localWelcome')}</div>
+          <div className="font-display text-[22px] text-ink-900">
+            {branding?.workspaceName || t('auth.localWelcome')}
+          </div>
           <div className="font-display italic text-[13px] text-ink-400 mt-1">{t('auth.localSub')}</div>
         </div>
 
@@ -110,24 +149,31 @@ export function AuthScreen() {
           </div>
         )}
 
-        <div className="w-full flex flex-col gap-2">
-          <label className="text-[11px] text-ink-400 font-display">{t('auth.nameLabel')}</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={t('auth.namePlaceholder')}
-            className="h-10 px-3 rounded-[8px] border border-ink-100 bg-cloud text-ink-900 placeholder:text-ink-300 text-[13px] focus:outline-none focus:border-sky2-300"
-          />
-          <button
-            type="button"
-            onClick={enter}
-            disabled={busy || starting}
-            className="h-11 rounded-[10px] bg-skype hover:bg-skype-deep text-white transition-colors flex items-center justify-center text-[14px] font-medium disabled:opacity-60"
-          >
-            {busy || starting ? t('auth.preparing') : t('auth.enter')}
-          </button>
-        </div>
+        {account && (
+          <div className="w-full flex items-center gap-3 rounded-[12px] border border-ink-100 bg-cloud px-3 py-2.5">
+            {account.avatarUrl
+              ? <img src={account.avatarUrl} alt={account.name} width={34} height={34} className="rounded-full object-cover shrink-0" style={{ width: 34, height: 34 }} />
+              : <div className="w-[34px] h-[34px] rounded-full bg-ink-100 shrink-0" />}
+            <div className="min-w-0">
+              <div className="font-display text-[13.5px] text-ink-900 truncate">{account.name}</div>
+              <div className="text-[11px] text-ink-400 truncate">{account.email}</div>
+            </div>
+            <div className="ml-auto text-[10px] uppercase tracking-wider text-ink-300">{t('auth.localAccountLabel')}</div>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={enter}
+          disabled={busy || starting || autoEntering}
+          className="w-full h-11 rounded-[10px] bg-skype hover:bg-skype-deep text-white transition-colors flex items-center justify-center text-[14px] font-medium disabled:opacity-60"
+        >
+          {busy || starting || autoEntering
+            ? t('auth.preparing')
+            : account ? t('auth.continueAs', { name: account.name }) : t('auth.enter')}
+        </button>
+
+        {!account && <div className="text-[11px] text-ink-300 text-center">{t('auth.firstRunNote')}</div>}
 
         {status && !needsKey && (
           <div className="text-[11px] text-ink-300 text-center">
