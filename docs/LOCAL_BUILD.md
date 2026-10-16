@@ -330,10 +330,15 @@ Two things are worth knowing before you switch:
   model the endpoint actually serves; nothing is renamed for you, because a
   silently renamed model is harder to debug than a clear 404. The endpoint must
   support **tool calling and streaming** — that is what agent turns need.
-- **Image generation is not part of this API.** Agent avatars have to be
-  uploaded (the app says so instead of failing obscurely). Embeddings are
-  likewise unnecessary: the embedded database has no `pgvector`, so memory
-  search runs without them, and `embedText` already fails soft.
+- **Images are a separate setting, because they are a separate capability.**
+  `CUMORA_IMAGE_BASE_URL` / `CUMORA_IMAGE_API_KEY` / `OPENAI_IMAGE_MODEL` point
+  at whatever can draw, so DeepSeek for text with OpenAI for images is fine (the
+  panel in **模型服务** has the fields). With a custom text endpoint and no image
+  endpoint, AI avatars are **unavailable** — the app disables 生成 in the agent's
+  portrait panel and says why, instead of failing after the click. Uploading a
+  picture always works, and new agents simply skip the auto-portrait.
+- Embeddings are unnecessary here: the embedded database has no `pgvector`, so
+  memory search runs without them, and `embedText` already fails soft.
 
 Local endpoints work the same way — `CUMORA_LLM_BASE_URL=http://127.0.0.1:8080/v1`
 for llama.cpp, Ollama or vLLM.

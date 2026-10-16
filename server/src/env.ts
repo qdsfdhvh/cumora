@@ -140,6 +140,16 @@ export const env = {
    * from a tight loop of identical crashes hammering it.
    */
   ALERT_DEDUPE_MS: Number(process.env.ALERT_DEDUPE_MS ?? 60_000),
+  /**
+   * Images can live somewhere else than text — a DeepSeek key cannot draw, and
+   * wanting cheap text plus real image generation is a normal combination.
+   * Empty means "same as text, when that endpoint is OpenAI"; a custom text
+   * endpoint with no image endpoint leaves AI avatars unavailable (the app
+   * disables the button rather than failing after the click). See
+   * server/src/image-service.ts.
+   */
+  IMAGE_BASE_URL: (process.env.CUMORA_IMAGE_BASE_URL ?? '').replace(/\/+$/, ''),
+  IMAGE_API_KEY: process.env.CUMORA_IMAGE_API_KEY ?? '',
   /** Image model for avatar generation. Override with OPENAI_IMAGE_MODEL. */
   OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL ?? 'gpt-image-2',
   /** Background scanner cadence */

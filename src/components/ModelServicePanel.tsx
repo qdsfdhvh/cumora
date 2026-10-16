@@ -55,6 +55,9 @@ export function ModelServicePanel({
   const [model, setModel] = useState('')
   const [support, setSupport] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [imageBaseUrl, setImageBaseUrl] = useState('')
+  const [imageModel, setImageModel] = useState('')
+  const [imageApiKey, setImageApiKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [testing, setTesting] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -68,6 +71,8 @@ export function ModelServicePanel({
     setBaseUrl(llm.baseUrl)
     setModel(llm.model)
     setSupport(llm.modelSupport)
+    setImageBaseUrl(llm.imageBaseUrl ?? '')
+    setImageModel(llm.imageModel ?? '')
     setPreset(detectPreset(llm.baseUrl))
   }, [llm])
 
@@ -88,7 +93,15 @@ export function ModelServicePanel({
     setBusy(true)
     setMsg(null)
     try {
-      const next = await bridge.setLlmConfig({ baseUrl, model, modelSupport: support, apiKey })
+      const next = await bridge.setLlmConfig({
+        baseUrl,
+        model,
+        modelSupport: support,
+        apiKey,
+        imageBaseUrl,
+        imageModel,
+        imageApiKey,
+      })
       if ('error' in next) {
         setMsg(t('me.llmSaveFailed', { error: next.error }))
         return
@@ -129,6 +142,9 @@ export function ModelServicePanel({
     || model !== (llm?.model ?? '')
     || support !== (llm?.modelSupport ?? '')
     || apiKey.trim().length > 0
+    || imageBaseUrl !== (llm?.imageBaseUrl ?? '')
+    || imageModel !== (llm?.imageModel ?? '')
+    || imageApiKey.trim().length > 0
 
   const field = 'h-9 px-2 rounded-[8px] border border-ink-100 bg-paper text-ink-900 placeholder:text-ink-300 text-[12.5px] focus:outline-none focus:border-sky2-300'
 
@@ -200,6 +216,52 @@ export function ModelServicePanel({
           </label>
         </div>
       )}
+
+      {/* Images can live on their own endpoint: a DeepSeek key cannot draw, and
+          "cheap text + real images" is a normal combination. */}
+      <div className="flex flex-col gap-1.5 border-t border-ink-100 pt-2">
+        <div className="text-[11.5px] font-display text-ink-600">{t('me.llmImageLabel')}</div>
+        <div className="text-[11px] text-ink-400 leading-snug">{t('me.llmImageHint')}</div>
+        <div className="flex items-stretch gap-2">
+          <label className="flex flex-col gap-1 flex-[2]">
+            <span className="text-[11px] text-ink-500">{t('me.llmImageBaseUrl')}</span>
+            <input
+              value={imageBaseUrl}
+              onChange={(e) => setImageBaseUrl(e.target.value)}
+              placeholder="https://api.openai.com/v1"
+              spellCheck={false}
+              autoComplete="off"
+              className={`${field} w-full`}
+            />
+          </label>
+          <label className="flex flex-col gap-1 flex-1">
+            <span className="text-[11px] text-ink-500">{t('me.llmImageModel')}</span>
+            <input value={imageModel} onChange={(e) => setImageModel(e.target.value)} placeholder="gpt-image-1" spellCheck={false} className={`${field} w-full`} />
+          </label>
+        </div>
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-ink-500">
+            {t('me.llmImageKey')}
+            {llm?.imageApiKeyStored && <span className="text-ink-300"> {t('me.llmKeySet')}</span>}
+          </span>
+          <input
+            type="password"
+            value={imageApiKey}
+            onChange={(e) => setImageApiKey(e.target.value)}
+            placeholder="sk-…"
+            spellCheck={false}
+            autoComplete="off"
+            className={`${field} w-full`}
+          />
+        </label>
+        {health?.images && (
+          <div className={health.images.available ? 'text-[11px] text-ink-400' : 'text-[11px] text-gold-deep'}>
+            {health.images.available
+              ? t('me.llmImageAvailable', { endpoint: health.images.endpoint ?? 'api.openai.com', model: health.images.model })
+              : t('me.llmImageUnavailable', { endpoint: baseUrl || 'api.openai.com' })}
+          </div>
+        )}
+      </div>
 
       {health && (
         <div

@@ -25,6 +25,7 @@ import { collectDocumentStorageKeys, evictDocumentRoom } from '../documents/room
 import { createPoll, castVote, closePoll, PollError } from '../polls.js'
 import { env } from '../env.js'
 import { llmEndpointLabel } from '../llm.js'
+import { imageEndpoint } from '../image-service.js'
 import { publicBodyParserError } from '../body-parser-errors.js'
 import { startConvene } from '../agents/convene.js'
 import { ensureDirectConversation } from '../agents/private_chat.js'
@@ -786,7 +787,16 @@ api.get('/local/llm-health', safe(async (req, res) => {
     && latest.status !== 'ok'
     && (!latestOk || new Date(latest.createdAt).getTime() > new Date(latestOk.createdAt).getTime()),
   )
-  res.json({ endpoint: llmEndpointLabel(), failing, latest, latestOk })
+  const images = imageEndpoint()
+  res.json({
+    endpoint: llmEndpointLabel(),
+    failing,
+    latest,
+    latestOk,
+    // The avatar panel disables 生成 from this, so it never needs a failed call
+    // to explain itself.
+    images: { available: images.available, endpoint: images.baseUrl || null, model: images.model, reason: images.reason },
+  })
 }))
 
 api.post('/auth/local', safe(async (req, res) => {
@@ -2536,9 +2546,16 @@ api.post('/agents', async (req, res) => {
   // don't block the 201 response since image gen can take several seconds.
   if (creation.created) {
     const newAgentId = data.id
-    void generateAndPersistAvatar({ agentId: newAgentId, tenant })
-      .then(() => console.log(`[agents] auto-portrait ready for ${newAgentId}`))
-      .catch((e) => console.warn(`[agents] auto-portrait failed for ${newAgentId}`, e))
+    // Skip when no image service is configured: it would fail on every new
+    // agent and fill the log with the same explanation, which the UI already
+    // gives where it belongs (the portrait panel).
+    if (!imageEndpoint().available) {
+      console.log(`[agents] skipping auto-portrait for ${newAgentId}: ${imageEndpoint().reason}`)
+    } else {
+      void generateAndPersistAvatar({ agentId: newAgentId, tenant })
+        .then(() => console.log(`[agents] auto-portrait ready for ${newAgentId}`))
+        .catch((e) => console.warn(`[agents] auto-portrait failed for ${newAgentId}`, e))
+    }
   }
 
   res.status(creation.created ? 201 : 200).json({
@@ -2719,13 +2736,22 @@ export async function generateAndPersistAvatar(args: {
     '- The portrait should feel like it was drawn for a profile in a magazine that cares deeply about who this person is — Refinery29 / Vice / Kinfolk / Cereal magazine youth-feature energy.',
   ].filter(Boolean).join('\n')
 
-  const { getTrackedLlmClient } = await import('../agents/llm-ledger.js')
-  const client = await getTrackedLlmClient({
+  // Refuse before generating: on an endpoint that serves text only, the call
+  // would come back as an opaque provider error after the prompt was built.
+  const endpoint = imageEndpoint()
+  if (!endpoint.available) {
+    throw new HttpError(400, `AI 头像生成不可用：${endpoint.reason} —— 在「我 → 本地服务 → 模型服务」配置图像服务，或直接上传图片`)
+  }
+  const [{ trackLlmClient }, { imageClient }] = await Promise.all([
+    import('../agents/llm-ledger.js'),
+    import('../image-service.js'),
+  ])
+  const client = trackLlmClient(imageClient(), {
     purpose: 'avatar-image', companyId: tenant, agentId: id,
     extras: { gender, kind: a.kind },
   })
   const r = await client.images.generate({
-    model: env.OPENAI_IMAGE_MODEL,
+    model: endpoint.model,
     prompt,
     size: '1024x1024',
     n: 1,

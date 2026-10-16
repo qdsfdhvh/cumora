@@ -45,6 +45,11 @@ const ENV_FILE_KEYS = [
   'OPENAI_MODEL',
   'OPENAI_MODEL_SUPPORT',
   'OPENAI_COMPACTION_MODEL',
+  // Images may live on a different endpoint than text (a DeepSeek key cannot
+  // draw). Empty ⇒ OpenAI when text is OpenAI, else AI avatars are unavailable.
+  'CUMORA_IMAGE_BASE_URL',
+  'CUMORA_IMAGE_API_KEY',
+  'OPENAI_IMAGE_MODEL',
 ]
 
 const BACKUP_DIR_NAME = 'backups'
@@ -269,6 +274,9 @@ class LocalServer {
         model: envFile.OPENAI_MODEL ?? '',
         modelSupport: envFile.OPENAI_MODEL_SUPPORT ?? '',
         hasKey: Boolean(envFile.CUMORA_LLM_API_KEY || envFile.OPENAI_API_KEY),
+        imageBaseUrl: envFile.CUMORA_IMAGE_BASE_URL ?? '',
+        imageApiKeyStored: Boolean(envFile.CUMORA_IMAGE_API_KEY),
+        imageModel: envFile.OPENAI_IMAGE_MODEL ?? '',
       },
       dataDir: localDir(),
       isDev: !app.isPackaged,
@@ -544,11 +552,15 @@ class LocalServer {
    * CUMORA_LLM_API_KEY when a custom provider is selected, so switching
    * providers does not overwrite the OpenAI key you may still want.
    */
-  async setLlmConfig({ baseUrl, model, modelSupport, apiKey }) {
+  async setLlmConfig({ baseUrl, model, modelSupport, apiKey, imageBaseUrl, imageModel, imageApiKey }) {
     const clean = (v) => String(v ?? '').trim()
     const url = clean(baseUrl).replace(/\/+$/, '')
     if (url && !/^https?:\/\//i.test(url)) {
       throw new Error('base URL must start with http:// or https://')
+    }
+    const imageUrl = clean(imageBaseUrl).replace(/\/+$/, '')
+    if (imageUrl && !/^https?:\/\//i.test(imageUrl)) {
+      throw new Error('image base URL must start with http:// or https://')
     }
     const main = clean(model)
     const small = clean(modelSupport) || main
@@ -557,7 +569,12 @@ class LocalServer {
       OPENAI_MODEL: main,
       OPENAI_MODEL_SUPPORT: small,
       OPENAI_COMPACTION_MODEL: small,
+      // Empty clears the line, which is how AI avatars get switched off again.
+      CUMORA_IMAGE_BASE_URL: imageUrl,
+      OPENAI_IMAGE_MODEL: clean(imageModel),
     }
+    const imageKey = clean(imageApiKey)
+    if (imageKey) patch.CUMORA_IMAGE_API_KEY = imageKey
     // OpenAI itself keeps using OPENAI_API_KEY (see server/src/env.ts: the
     // custom key falls back to it anyway).
     const key = clean(apiKey)

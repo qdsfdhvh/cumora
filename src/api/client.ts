@@ -523,6 +523,9 @@ export interface ApiLocalLlmHealth {
   failing: boolean
   latest: ApiLlmCallSummary | null
   latestOk: ApiLlmCallSummary | null
+  /** Whether the deployment can generate images at all, so the avatar button
+   *  can be disabled instead of failing after the click. */
+  images: { available: boolean; endpoint: string | null; model: string; reason: string | null }
 }
 
 export interface ApiAgentEvent {
