@@ -1169,6 +1169,7 @@ export const zhCN: Partial<Record<keyof typeof en, string>> = {
   'me.backupLast': '上次备份 {when} · {size} · {dir}',
   'me.backupNever': '还没有自动备份 —— 位置是 <数据目录>/backups。',
   'me.backupLastError': '上次失败：{error}',
+  'me.llmDirtyHint': '有未保存的改动 —— 先「保存并重启」再测试：测试连接测的是服务端正在运行的配置，不是这里输入的内容。',
   'me.durabilityLabel': '写入持久性',
   'me.durabilitySafe': '安全',
   'me.durabilityFast': '快速',

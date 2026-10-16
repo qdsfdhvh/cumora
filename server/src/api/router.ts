@@ -588,7 +588,12 @@ api.get('/health', async (_req, res) => {
       healthPool.query('SELECT 1'),
       new Promise((_, reject) => setTimeout(() => reject(new Error('health db check timed out')), 1000)),
     ])
-    res.json({ ok: true, ts: Date.now() })
+    // `rev` is the fingerprint of the config file this process was started
+    // with (the desktop app stamps CUMORA_CONFIG_REV). The app compares it
+    // before adopting a server it did not fork: without that, a process left
+    // behind by an earlier run keeps serving stale settings and a saved change
+    // looks like it did nothing.
+    res.json({ ok: true, ts: Date.now(), rev: process.env.CUMORA_CONFIG_REV ?? null })
   } catch (e) {
     res.status(503).json({ ok: false, error: String(e) })
   }
