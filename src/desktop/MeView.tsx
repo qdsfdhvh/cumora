@@ -9,6 +9,7 @@ import { useAuth, SIGNED_OUT_KEY } from '@/stores/auth'
 import { usePairingCodes } from '@/stores/pairing-codes'
 import { copyText } from '@/lib/clipboard'
 import { Avatar } from '@/components/Avatar'
+import { ModelServicePanel } from '@/components/ModelServicePanel'
 import { Checkbox } from '@/components/Checkbox'
 import { AutoPairAction } from '@/components/AutoPairAction'
 import { AppearancePicker, ChatLayoutPicker } from '@/components/AppearancePicker'
@@ -530,6 +531,8 @@ function AboutSection() {
           </div>
           {saved && <div className="text-[11.5px] text-ink-500">{t('me.keySavedFor')}</div>}
           {backupMsg && <div className="text-[11.5px] text-ink-500 font-display break-all">{backupMsg}</div>}
+
+          <ModelServicePanel status={status} onStatus={setStatus} />
 
           <div className="flex flex-col gap-1.5 pt-1">
             <div className="flex items-center gap-2">

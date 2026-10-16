@@ -310,9 +310,12 @@ OPENAI_MODEL_SUPPORT=deepseek-chat                 # cheap/classifier model
 OPENAI_COMPACTION_MODEL=deepseek-chat              # summaries
 ```
 
-The app writes these for you in **Me → 本地服务 → 模型服务** (presets plus a
-free-form base URL), and **测试连接** does one tiny round-trip so you see the
-provider's own error instead of a silent agent.
+The app writes these for you in **Me → 本地服务 → 模型服务**: pick a preset
+(OpenAI / DeepSeek / custom), and **测试连接** does one tiny round-trip so you see
+the provider's own answer — or its own error — instead of a silent agent. A key
+entered for a custom provider is stored separately (`CUMORA_LLM_API_KEY`), so
+switching providers does not overwrite the OpenAI key; selecting **OpenAI** and
+saving clears the custom fields and goes back to the defaults.
 
 Two things are worth knowing before you switch:
 

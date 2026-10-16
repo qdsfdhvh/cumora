@@ -1189,6 +1189,17 @@ ipcMain.handle('local-server:set-durability', async (_event, mode) => {
   return await localServer.setDurability(mode)
 })
 
+// Model service (Me → 本地服务 → 模型服务): point the server at another
+// OpenAI-compatible endpoint. Errors are reported as state, not thrown at the
+// renderer, so the panel can show the message next to the fields.
+ipcMain.handle('local-server:set-llm-config', async (_event, config) => {
+  try {
+    return await localServer.setLlmConfig(config ?? {})
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e), ...localServer.status() }
+  }
+})
+
 ipcMain.handle('local-server:restart', async () => {
   await localServer.restart()
   return localServer.status()

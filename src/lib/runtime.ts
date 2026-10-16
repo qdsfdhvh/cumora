@@ -92,6 +92,8 @@ interface CumoraBridge {
     restart: () => Promise<LocalServerStatus>
     /** Switch write durability and restart the server. */
     setDurability: (mode: 'safe' | 'fast') => Promise<LocalServerStatus>
+    /** Point the server's own LLM calls at another OpenAI-compatible endpoint. */
+    setLlmConfig: (config: LocalLlmConfig) => Promise<LocalServerStatus | LocalServerError>
     /** Ask where to save, then archive the data directory. */
     backup: () => Promise<{ cancelled?: boolean; ok?: boolean; path?: string; bytes?: number; error?: string }>
     /** Run the daemon CLI against the local server with a freshly minted code
@@ -113,6 +115,20 @@ interface CumoraBridge {
 /** Snapshot of the embedded server + database the desktop app runs.
  *  `state` is 'stopped' before boot, 'starting' while the database opens and
  *  migrations run, 'ready' once /api/health answers, 'error' on failure. */
+/** What the 模型服务 panel sends down. `apiKey` is optional: leaving it empty
+ *  keeps whatever is stored. */
+export interface LocalLlmConfig {
+  baseUrl: string
+  model: string
+  modelSupport: string
+  apiKey?: string
+}
+
+/** `setLlmConfig` reports validation failures as data (with the status). */
+export interface LocalServerError {
+  error: string
+}
+
 export interface LocalServerStatus {
   state: 'stopped' | 'starting' | 'ready' | 'error'
   detail: string
@@ -123,6 +139,14 @@ export interface LocalServerStatus {
   backingUp?: boolean
   /** Write durability: 'safe' (default) or 'fast'. */
   durability?: 'safe' | 'fast'
+  /** Model service the server's own LLM calls use (empty ⇒ OpenAI defaults). */
+  llm?: {
+    baseUrl: string
+    model: string
+    modelSupport: string
+    /** True when a key is available — the custom one, else the OpenAI one. */
+    hasKey: boolean
+  }
   /** On-disk directory holding the database, uploads, and server.env. */
   dataDir: string
   isDev: boolean

@@ -754,6 +754,13 @@ export const api = {
       '/me',
       { method: 'PATCH', body: JSON.stringify(input) },
     ),
+  /** One tiny round-trip against the configured model service, so the
+   *  模型服务 panel can show the provider's own answer or error. */
+  probeLocalLlm: (model?: string) =>
+    http<{ ok: boolean; endpoint: string; model: string; ms: number; text?: string; error?: string }>(
+      '/local/llm-probe',
+      { method: 'POST', body: JSON.stringify({ model: model ?? null }) },
+    ),
   /** Replace YOUR avatar with an uploaded image (`POST /me/avatar`). */
   uploadAvatar: (file: File) => postImage('/me/avatar', file),
   /** Replace an AGENT's portrait with an uploaded image. */

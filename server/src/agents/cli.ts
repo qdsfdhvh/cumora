@@ -2503,6 +2503,15 @@ async function generateAndUploadImage(opts: {
   // get pooled with avatar regeneration. Both ultimately hit the same image
   // model but the spend driver is very different (per agent action vs per
   // agent creation), and the operator will want to slice them apart.
+  // Image generation is not part of the OpenAI-compatible Chat Completions
+  // surface, so a custom endpoint (DeepSeek and friends, or a local model
+  // server) cannot serve this. Say what to do instead — the provider's own 404
+  // reads as a mystery, and the app can upload a picture just as well.
+  if (env.LLM_BASE_URL) {
+    throw new Error(
+      `image generation is unavailable on ${env.LLM_BASE_URL} (that endpoint serves text, not images) — upload a picture instead`,
+    )
+  }
   const { getTrackedLlmClient } = await import('./llm-ledger.js')
   const client = await getTrackedLlmClient({
     purpose: 'agent-image',
