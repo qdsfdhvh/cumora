@@ -90,6 +90,8 @@ interface CumoraBridge {
     status: () => Promise<LocalServerStatus>
     setOpenAIKey: (key: string) => Promise<LocalServerStatus>
     restart: () => Promise<LocalServerStatus>
+    /** Ask where to save, then archive the data directory. */
+    backup: () => Promise<{ cancelled?: boolean; ok?: boolean; path?: string; bytes?: number; error?: string }>
     openDataDir: () => Promise<boolean>
     onStatus: (handler: (status: LocalServerStatus) => void) => () => void
   }
@@ -104,6 +106,8 @@ export interface LocalServerStatus {
   port: number
   /** False until the user enters an OpenAI key on first run. */
   hasApiKey: boolean
+  /** True while a backup is in flight (the server pauses for a few seconds). */
+  backingUp?: boolean
   /** On-disk directory holding the database, uploads, and server.env. */
   dataDir: string
   isDev: boolean

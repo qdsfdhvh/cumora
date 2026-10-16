@@ -1,5 +1,5 @@
 /* eslint-env node */
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell, nativeTheme, screen, ipcMain, globalShortcut, protocol, net, clipboard } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, nativeTheme, screen, ipcMain, globalShortcut, protocol, net, clipboard, dialog } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { pathToFileURL } = require('node:url')
@@ -1145,6 +1145,19 @@ ipcMain.handle('local-server:status', () => localServer.status())
 ipcMain.handle('local-server:set-openai-key', async (_event, key) => {
   if (typeof key !== 'string') return localServer.status()
   return localServer.setOpenAIKey(key)
+})
+
+/** "Back up my data…" — asks where, then archives the data directory with the
+ *  server briefly stopped (see localServer.backupTo). */
+ipcMain.handle('local-server:backup', async () => {
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow ?? undefined, {
+    title: 'Back up Cumora data',
+    defaultPath: path.join(app.getPath('documents'), `cumora-backup-${stamp}.zip`),
+    filters: [{ name: 'Zip archive', extensions: ['zip'] }],
+  })
+  if (canceled || !filePath) return { cancelled: true }
+  return await localServer.backupTo(filePath)
 })
 
 ipcMain.handle('local-server:restart', async () => {

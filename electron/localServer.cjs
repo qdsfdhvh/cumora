@@ -25,6 +25,7 @@ const path = require('node:path')
 const fs = require('node:fs')
 const http = require('node:http')
 const crypto = require('node:crypto')
+const { spawn } = require('node:child_process')
 
 const SERVER_PORT = 5181
 const HEALTH_PATH = '/api/health'
@@ -121,6 +122,7 @@ class LocalServer {
     this.logLines = []
     this.onStatus = null
     this.startPromise = null
+    this.backingUp = false
   }
 
   setStatusHandler(handler) { this.onStatus = handler }
@@ -130,6 +132,8 @@ class LocalServer {
     return {
       state: this.state,
       detail: this.detail,
+      /** True while a backup is in flight (the server is briefly stopped). */
+      backingUp: this.backingUp === true,
       port: SERVER_PORT,
       hasApiKey: Boolean(envFile.OPENAI_API_KEY),
       dataDir: localDir(),
@@ -176,6 +180,52 @@ class LocalServer {
     const envFile = readEnvFile()
     if (envFile.OPENAI_API_KEY) env.OPENAI_API_KEY = envFile.OPENAI_API_KEY
     return env
+  }
+
+  /**
+   * Copy the whole data directory into a zip.
+   *
+   * The embedded database must not be copied while Postgres is running (a torn
+   * copy is unopenable), so this stops the server first — which closes PGlite
+   * cleanly — archives, then starts it again. A few seconds of downtime, and
+   * the app stays open.
+   */
+  async backupTo(destPath) {
+    if (this.backingUp) return { ok: false, error: 'a backup is already running' }
+    if (!destPath || typeof destPath !== 'string') return { ok: false, error: 'no destination' }
+    this.backingUp = true
+    this.emit()
+    const wasRunning = this.state === 'ready'
+    try {
+      this.stop()
+      // Give launchd/Node a beat to release the data directory.
+      await new Promise((resolve) => setTimeout(resolve, 800))
+      const result = await new Promise((resolve) => {
+        // Archive exactly what a restore needs. `zip` (present on macOS) takes
+        // several roots in one pass and, unlike `ditto`, does not add
+        // AppleDouble `._*` entries or sweep in stray copies sitting next to
+        // the database.
+        const items = ['pgdata', 'uploads', 'server.env', 'logs'].filter((name) => fs.existsSync(path.join(localDir(), name)))
+        const child = spawn('/usr/bin/zip', ['-r', '-q', '-y', destPath, ...items], { cwd: localDir() })
+        child.on('error', (e) => resolve({ ok: false, error: e.message }))
+        child.on('exit', (code) => {
+          if (code === 0) {
+            let bytes = 0
+            try { bytes = fs.statSync(destPath).size } catch { /* ignore */ }
+            resolve({ ok: true, path: destPath, bytes })
+          } else {
+            resolve({ ok: false, error: `zip exited with code ${code}` })
+          }
+        })
+      })
+      if (result.ok) this.pushLog(`[backup] wrote ${result.path} (${Math.round(result.bytes / 1024 / 1024)} MB)`)
+      else this.pushLog(`[backup] failed: ${result.error}`)
+      return result
+    } finally {
+      this.backingUp = false
+      if (wasRunning || app.isPackaged) await this.start()
+      this.emit()
+    }
   }
 
   /** Start (or adopt) the local server. Resolves once it is healthy. */
