@@ -116,6 +116,17 @@ node --import tsx scripts/fix-daemon-path.ts --reload   # drops session dirs, re
 Re-running `--install-service` from such a shell poisons the PATH again — run
 the fix afterwards, or install the service from a plain terminal.
 
+### Pin the daemon version
+
+`--install-service` also writes `npx -y cumora@latest …`, so every restart of
+the service downloads whatever npm published most recently — a daemon can move
+under a server you did not upgrade. Pin it to the bundled server's version:
+
+```bash
+node --import tsx scripts/pin-daemon-version.ts --reload    # → cumora@<repo version>
+node --import tsx scripts/pin-daemon-version.ts --latest    # back to tracking npm
+```
+
 Check what the daemon can actually reach before blaming the app:
 
 ```bash
@@ -218,6 +229,25 @@ Everything here is local, so there is no provider to read any of it from:
 
 Images are stored under `<userData>/local/uploads/avatars/` and served from the
 API origin, so nothing leaves the machine and no CDN is involved.
+
+## Background work on a local machine
+
+The cloud build ran several idle workers on cadences sized for a shared
+deployment. Embedded mode slows the ones that only exist for multi-replica
+safety, and leaves the functional ones alone (calendar dispatch, poll
+expiry, scanner, idle ticks, stale-run and offline-computer sweeps):
+
+| worker | shared | embedded | why |
+|---|---|---|---|
+| realtime outbox | 1 s poll | 15 s poll | delivery is nudge-driven (`nudgeRealtimeOutbox` fires on every enqueue); the poll only catches a missed nudge |
+| db-gc | 5 min | 30 min | retention sweeps over a laptop-sized database |
+| workspace cleanup | 1 min | 15 min | only relevant after deleting a workspace |
+| email retry | 1 min | 15 min | outbound mail is mock without `RESEND_API_KEY` |
+| llm rollup | 2 min | 15 min | the local UI is the only reader |
+
+Each stays overridable: `REALTIME_OUTBOX_INTERVAL_MS`, `DB_GC_INTERVAL_MS`,
+`WORKSPACE_CLEANUP_INTERVAL_MS`, `EMAIL_RETRY_INTERVAL_MS`,
+`LLM_ROLLUP_INTERVAL_MS`.
 
 ## Embedded-database constraints
 
