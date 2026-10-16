@@ -562,69 +562,8 @@ interface MeResponse {
   user: { id: string; email: string; name: string; emailVerified: boolean; providers: string[] }
   companies: Array<{ id: string; name: string; slug: string; role: string; tier?: string; logoUrl?: string | null }>
   activeCompanyId: string | null
-  serverCapabilities: ServerCapabilities
 }
 
-export interface ServerCapabilities {
-  /** Whether the server can send outbound invitation / welcome emails.
-   *  Driven by EMAIL_DOMAIN being set on the server. The invite modal
-   *  hides the "Email this invite" checkbox when false. */
-  invitationEmail: boolean
-}
-
-export type ApiInvitationStatus = 'active' | 'revoked' | 'expired' | 'consumed'
-
-export interface ApiInvitation {
-  /** Stable identifier (= server-side token_hash). Used by the revoke
-   *  endpoint. The raw token itself is ONLY returned on create — never
-   *  re-exposed. */
-  id: string
-  email: string | null
-  role: 'member' | 'admin'
-  note: string | null
-  maxUses: number
-  useCount: number
-  createdAt: string
-  expiresAt: string
-  revokedAt: string | null
-  lastAcceptedAt: string | null
-  lastAcceptedBy: string | null
-  invitedBy: string
-  inviterName: string | null
-  status: ApiInvitationStatus
-}
-
-/** Returned exactly ONCE from the create endpoint. Embeds the freshly-minted
- *  raw token + the public accept URL — the server keeps only the hash, so
- *  the UI must surface this immediately for the user to copy / send. */
-export interface ApiInvitationWithToken {
-  id: string
-  token: string
-  url: string
-  email: string | null
-  role: 'member' | 'admin'
-  note: string | null
-  maxUses: number
-  useCount: number
-  createdAt: string
-  expiresAt: string
-  status: 'active'
-  /** Present when the inviter asked the server to send the invite email
-   *  on their behalf (`sendEmail: true` in the create payload). Null when
-   *  they did not. The UI uses this to render "email sent" /
-   *  "email failed: <reason>" feedback alongside the copy-link card. */
-  emailDelivery: ApiInvitationEmailDelivery | null
-}
-
-export interface ApiInvitationEmailDelivery {
-  attempted: boolean
-  ok: boolean
-  error: string | null
-  /** Set when the server deliberately didn't try — today only
-   *  'no_email_config' (EMAIL_DOMAIN unset). Distinct from `error` so
-   *  the UI can show a different message. */
-  skipped: 'no_email_config' | null
-}
 
 export type WorkspaceRole = 'owner' | 'admin' | 'member'
 
@@ -635,30 +574,6 @@ export interface ApiWorkspaceMember {
   avatarUrl: string | null
   role: WorkspaceRole
   joinedAt: string
-}
-
-export type ApiInvitationPreviewStatus =
-  | 'valid' | 'revoked' | 'expired' | 'consumed'
-  | 'wrong_email' | 'already_member' | 'not_found'
-
-export interface ApiInvitationPreview {
-  status: ApiInvitationPreviewStatus
-  invitation?: {
-    role: string
-    email: string | null
-    note: string | null
-    expiresAt: string
-    createdAt: string
-    inviterName: string | null
-    company: { id: string; name: string; slug: string }
-    multiUse: boolean
-  }
-}
-
-export interface ApiInvitationAccept {
-  ok: true
-  alreadyMember: boolean
-  company: { id: string; name: string; slug: string; role: string }
 }
 
 export type ShippingFeatureStatus =
@@ -943,49 +858,6 @@ export const api = {
   deleteCompany: (companyId: string, confirmation: string) =>
     http<{ ok: true; nextCompanyId: string }>(`/companies/${encodeURIComponent(companyId)}`, {
       method: 'DELETE', body: JSON.stringify({ confirmation }),
-    }),
-  /** Owner/admin-only: list every invitation (active + historical) for a
-   *  company so the management UI can show recent activity. */
-  listInvitations: (companyId: string) =>
-    http<ApiInvitation[]>(`/companies/${encodeURIComponent(companyId)}/invitations`),
-  /** Owner/admin-only: mint a fresh invite. Pass `email` for a single-use
-   *  email-locked invite, omit (or set `multiUse: true`) for a shareable
-   *  link. The returned `url` + `token` are the ONLY copy — the server
-   *  stores just the hash. */
-  createInvitation: (companyId: string, input: {
-    email?: string | null
-    role?: 'member' | 'admin'
-    note?: string | null
-    multiUse?: boolean
-    maxUses?: number
-    /** Ask the server to send the invitation email on the inviter's
-     *  behalf. Ignored unless `email` is also set. Result reported back
-     *  via `emailDelivery` on the response. */
-    sendEmail?: boolean
-  }) =>
-    http<ApiInvitationWithToken>(`/companies/${encodeURIComponent(companyId)}/invitations`, {
-      method: 'POST', body: JSON.stringify(input),
-    }),
-  /** Owner/admin-only: revoke an invitation by its id (= token hash). */
-  revokeInvitation: (companyId: string, inviteId: string) =>
-    http<{ ok: boolean; revoked: boolean }>(
-      `/companies/${encodeURIComponent(companyId)}/invitations/${encodeURIComponent(inviteId)}`,
-      { method: 'DELETE' },
-    ),
-  /** Public: preview an invitation by its raw token. Returns the company
-   *  + inviter so the accept screen can show "<X> invited you to <Y>"
-   *  before the visitor signs in. When the caller IS signed in, the status
-   *  also reflects `already_member` / `wrong_email`. */
-  previewInvitation: (token: string) =>
-    http<ApiInvitationPreview>(`/invitations/${encodeURIComponent(token)}`),
-  /** Auth required: redeem an invitation. Joins the caller to the target
-   *  company + adds them as a participant + posts "X joined" to #all-hands.
-   *  Idempotent — calling twice with the same valid token returns
-   *  `alreadyMember: true` on the second hit instead of incrementing
-   *  use_count. */
-  acceptInvitation: (token: string) =>
-    http<ApiInvitationAccept>(`/invitations/${encodeURIComponent(token)}/accept`, {
-      method: 'POST', body: JSON.stringify({}),
     }),
   getParticipants: () => http<ApiParticipant[]>('/participants'),
 

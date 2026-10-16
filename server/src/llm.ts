@@ -28,7 +28,6 @@
  * callers already know.
  */
 import OpenAI from 'openai'
-import { pool } from './db/pool.js'
 import { env } from './env.js'
 import { isNovitaModel, novitaResponsesShim } from './novita.js'
 import { isOrcaRouterModel, orcarouterResponsesCreate } from './orcarouter.js'

@@ -4,7 +4,6 @@
  * current token from this store via getToken() (see api/client.ts).
  */
 import { create } from 'zustand'
-import type { ServerCapabilities } from '@/api/client'
 import { commitIfEpochCurrent } from './contextEpoch'
 import { usePairingCodes } from './pairing-codes'
 
@@ -41,10 +40,8 @@ interface AuthState {
   /** Server-driven feature flags. Null until the first /auth/me probe
    *  populates them; consumers should treat null as "don't know yet" and
    *  default to a safe value (usually: hide optional UI). */
-  serverCapabilities: ServerCapabilities | null
   setSession: (token: string, user: AuthUser, companyId: string | null) => void
   setMe: (user: AuthUser, companies: AuthCompany[], activeCompanyId: string | null) => void
-  setServerCapabilities: (caps: ServerCapabilities) => void
   setActiveCompany: (id: string) => void
   addCompany: (c: AuthCompany) => void
   removeCompany: (id: string, nextCompanyId: string | null) => boolean
@@ -108,7 +105,6 @@ export const useAuth = create<AuthState>((set) => ({
   activeCompanyId: localStorage.getItem(COMPANY_KEY),
   contextEpoch: 0,
   ready: false,
-  serverCapabilities: null,
   setSession(token, user, companyId) {
     // A fresh session must never inherit a code revealed by the previous one.
     usePairingCodes.getState().clear()
@@ -149,9 +145,6 @@ export const useAuth = create<AuthState>((set) => ({
         : s.contextEpoch,
     }))
     if (previous !== resolved) resetWorkspaceStores()
-  },
-  setServerCapabilities(caps) {
-    set({ serverCapabilities: caps })
   },
   setActiveCompany(id) {
     if (useAuth.getState().activeCompanyId === id) return
@@ -221,8 +214,7 @@ export const useAuth = create<AuthState>((set) => ({
       companies: [],
       activeCompanyId: null,
       ready: true,
-      serverCapabilities: null,
-      contextEpoch: s.contextEpoch + 1,
+          contextEpoch: s.contextEpoch + 1,
     }))
     // Stale object-URLs from the previous user's avatars would otherwise
     // linger; clear them so the next sign-in doesn't briefly render a

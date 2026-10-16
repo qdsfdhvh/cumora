@@ -19,10 +19,6 @@ import { NotificationToasts } from '@/components/NotificationToasts'
 import { NotificationWindow } from '@/components/NotificationWindow'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { isNotificationWindow } from '@/lib/runtime'
-import {
-  InviteAcceptScreen, consumeInviteFromUrl,
-  getPendingInvite, clearPendingInvite,
-} from '@/components/InviteAcceptScreen'
 import { NoWorkspaceScreen } from '@/components/NoWorkspaceScreen'
 import { WorkspaceSessionBridge } from '@/components/WorkspaceSessionBridge'
 
@@ -185,39 +181,6 @@ function MainApp() {
   // the simplest way to reload all data without stale rows leaking across.
   const userId = useAuth((s) => s.user?.id ?? null)
   const companyId = useAuth((s) => s.activeCompanyId)
-
-  // Invite-link handling — runs BEFORE the rest of the shell so the
-  // accept page is the user's first impression when they open a link. The
-  // token can ride in via URL (fresh click) or localStorage (resumed
-  // after an OAuth round-trip). The state is unset on done so the user
-  // lands in the freshly-joined workspace. We do NOT support cumora://
-  // deep links: invite URLs are always https://<web>/invite/<token>, so
-  // the OS hands them to the default browser — Electron picks up the new
-  // workspace on its next /auth/me refresh.
-  const [inviteToken, setInviteToken] = useState<string | null>(() => {
-    const fromUrl = consumeInviteFromUrl()
-    if (fromUrl) {
-      // Scrub the URL immediately so a refresh doesn't re-fire the same
-      // flow; the token stays in component state.
-      fromUrl.clear()
-      return fromUrl.token
-    }
-    return getPendingInvite()
-  })
-
-  if (inviteToken) {
-    const screen = (
-      <InviteAcceptScreen
-        token={inviteToken}
-        onDone={() => { clearPendingInvite(); setInviteToken(null) }}
-      />
-    )
-    return (
-      <AuthGate unauthFallback={screen}>
-        {screen}
-      </AuthGate>
-    )
-  }
 
   return (
     <AuthGate>

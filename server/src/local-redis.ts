@@ -32,8 +32,6 @@
 
 type RedisValue = string
 
-interface ZSetEntry { score: number; member: string }
-
 function nowMs(): number { return Date.now() }
 
 function patternToRegExp(pattern: string): RegExp {
@@ -323,8 +321,6 @@ export class LocalRedisClient {
   private messageHandler: ((channel: string, payload: string) => void) | null = null
   private requestedChannels = new Set<string>()
 
-  constructor(private readonly opts: { lazyConnect?: boolean } = {}) {}
-
   /* ---- strings ---- */
   async get(key: string): Promise<string | null> { this.assertOpen(); return globalStore.get(key) }
 
@@ -456,9 +452,7 @@ export class LocalRedisClient {
   async unsubscribe(...channels: string[]): Promise<number> {
     this.assertOpen()
     for (const ch of channels) this.requestedChannels.delete(ch)
-    if (this.messageHandler) {
-      for (const ch of channels) globalStore.unsubscribe(this.messageHandler)
-    }
+    if (this.messageHandler) globalStore.unsubscribe(this.messageHandler)
     return this.requestedChannels.size
   }
 
@@ -593,7 +587,10 @@ export class LocalRedisPipeline {
   }
   zrem(key: string, ...members: string[]): this { return this.push(() => globalStore.zrem(key, ...members)) }
 
-  /** ioredis pipelines are thenable; support `await pipe` directly too. */
+  /** ioredis pipelines are thenable; support `await pipe` directly too.
+   *  The lint rule assumes a `then` member is an accidental thenable — here it
+   *  is the point: `await redis.multi()…` is a documented ioredis shape. */
+  // biome-ignore lint/suspicious/noThenProperty: deliberate ioredis pipeline parity
   then<T>(onfulfilled: (v: unknown[]) => T, onrejected?: (e: unknown) => unknown): Promise<T> {
     return this.exec().then(onfulfilled, onrejected) as Promise<T>
   }

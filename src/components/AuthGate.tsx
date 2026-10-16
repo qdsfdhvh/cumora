@@ -14,16 +14,11 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { api, ApiError } from '@/api/client'
 import { useT } from '@/lib/i18n'
 import { useAuth } from '@/stores/auth'
-import { isElectron } from '@/lib/runtime'
 import { AuthScreen } from './AuthScreen'
 import { WindowDragStrip } from './WindowDragStrip'
 
 interface AuthGateProps {
   children: ReactNode
-  /** Override the "no token" rendering. The invite-accept flow uses this
-   *  so an unauthenticated visitor sees the invitation card (with sign-in
-   *  buttons embedded) instead of the bare login screen. */
-  unauthFallback?: ReactNode
 }
 
 interface CarriedSession { token: string; companyId: string | null }
@@ -44,14 +39,13 @@ function consumeOAuthFragment(): CarriedSession | null {
 }
 
 
-export function AuthGate({ children, unauthFallback }: AuthGateProps) {
+export function AuthGate({ children }: AuthGateProps) {
   const t = useT()
   const token = useAuth((s) => s.token)
   const cachedUser = useAuth((s) => s.user)
   const ready = useAuth((s) => s.ready)
   const setSession = useAuth((s) => s.setSession)
   const setMe = useAuth((s) => s.setMe)
-  const setServerCapabilities = useAuth((s) => s.setServerCapabilities)
   const clear = useAuth((s) => s.clear)
   const markReady = useAuth((s) => s.markReady)
 
@@ -84,7 +78,6 @@ export function AuthGate({ children, unauthFallback }: AuthGateProps) {
           const r = await api.authMe()
           if (cancelled) return
           setMe(r.user, r.companies, r.activeCompanyId)
-          setServerCapabilities(r.serverCapabilities)
           markReady()
           return
         } catch (e) {
@@ -103,7 +96,7 @@ export function AuthGate({ children, unauthFallback }: AuthGateProps) {
       }
     })()
     return () => { cancelled = true }
-  }, [token, setMe, setServerCapabilities, clear, markReady])
+  }, [token, setMe, clear, markReady])
 
   // Paint the real shell right away when the last session is still on disk:
   // the probe below only confirms it (and clears it on a 401). Without this the
@@ -119,6 +112,6 @@ export function AuthGate({ children, unauthFallback }: AuthGateProps) {
     )
   }
 
-  if (!token) return <>{unauthFallback ?? <AuthScreen />}</>
+  if (!token) return <AuthScreen />
   return <>{children}</>
 }
