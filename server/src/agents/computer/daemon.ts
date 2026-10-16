@@ -85,7 +85,13 @@ export function createEngineRescanQueue(
   }
 }
 
-const CONFIG_DIR = join(homedir(), '.cumora')
+/**
+ * Where this daemon keeps its state (pairing, agent sessions, logs).
+ *
+ * `CUMORA_CONFIG_DIR` overrides the default so a second install — or a test —
+ * can pair a daemon without touching `~/.cumora` (the running one).
+ */
+const CONFIG_DIR = process.env.CUMORA_CONFIG_DIR?.trim() || join(homedir(), '.cumora')
 const CONFIG_PATH = join(CONFIG_DIR, 'computer.json')
 const AGENTS_ROOT = join(CONFIG_DIR, 'agents')
 // Per-agent, per-engine session id, persisted OUTSIDE the agent home (so the engine's

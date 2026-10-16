@@ -92,6 +92,17 @@ interface CumoraBridge {
     restart: () => Promise<LocalServerStatus>
     /** Ask where to save, then archive the data directory. */
     backup: () => Promise<{ cancelled?: boolean; ok?: boolean; path?: string; bytes?: number; error?: string }>
+    /** Run the daemon CLI against the local server with a freshly minted code
+     *  (no terminal, no copy-paste). `installService` also registers it to
+     *  start at login. */
+    pairThisMac: (options: {
+      code: string
+      engine?: string | null
+      installService?: boolean
+      allowUnsandboxed?: boolean
+    }) => Promise<{ ok: boolean; log?: string; error?: string; hint?: string; exitCode?: number; command?: string }>
+    /** Output lines from that install, streamed while it runs. */
+    onPairOutput: (handler: (line: string) => void) => () => void
     openDataDir: () => Promise<boolean>
     onStatus: (handler: (status: LocalServerStatus) => void) => () => void
   }

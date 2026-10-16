@@ -93,6 +93,14 @@ contextBridge.exposeInMainWorld('cumora', {
     restart: () => ipcRenderer.invoke('local-server:restart'),
     /** Ask where to save, then archive the data directory (server pauses). */
     backup: () => ipcRenderer.invoke('local-server:backup'),
+    /** Pair this Mac: runs the daemon CLI with the code the app minted. */
+    pairThisMac: (options) => ipcRenderer.invoke('local-server:pair-this-mac', options),
+    /** Streaming output lines from that install. */
+    onPairOutput: (handler) => {
+      const wrapped = (_evt, line) => handler(String(line ?? ''))
+      ipcRenderer.on('local-server:pair-output', wrapped)
+      return () => ipcRenderer.removeListener('local-server:pair-output', wrapped)
+    },
     openDataDir: () => ipcRenderer.invoke('local-server:open-data-dir'),
     onStatus: (handler) => {
       const wrapped = (_evt, payload) => handler(payload)

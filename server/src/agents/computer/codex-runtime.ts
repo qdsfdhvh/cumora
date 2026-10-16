@@ -13,7 +13,9 @@ export const CODEX_RUNTIME_CONFIG_ARGS = [
 ]
 
 export function codexRuntimeHome(): string {
-  return join(homedir(), '.cumora', 'codex-runtime')
+  // Same state-directory rule as the daemon (see daemon.ts CONFIG_DIR).
+  const configDir = process.env.CUMORA_CONFIG_DIR?.trim() || join(homedir(), '.cumora')
+  return join(configDir, 'codex-runtime')
 }
 
 interface SharedAuth { source: string; fileId: string }

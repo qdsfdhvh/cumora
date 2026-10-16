@@ -10,6 +10,7 @@ import { usePairingCodes } from '@/stores/pairing-codes'
 import { copyText } from '@/lib/clipboard'
 import { Avatar } from '@/components/Avatar'
 import { Checkbox } from '@/components/Checkbox'
+import { AutoPairAction } from '@/components/AutoPairAction'
 import { AppearancePicker, ChatLayoutPicker } from '@/components/AppearancePicker'
 import { LanguagePicker } from '@/components/LanguagePicker'
 import { useT, type MessageKey } from '@/lib/i18n'
@@ -1488,6 +1489,7 @@ function ComputersTab() {
               </span>
             </label>
             <pre className="bg-ink-900 text-cloud rounded-[10px] p-3 text-[12px] overflow-x-auto whitespace-pre-wrap break-all font-mono select-all">{pairCommand}</pre>
+            <AutoPairAction engine={engine} installService={asService} />
             <div className="flex gap-2 mt-3">
               <button type="button" onClick={copyCommand} aria-live="polite"
                 className="inline-flex items-center justify-center gap-1.5 min-w-[128px] text-[12px] font-semibold px-3 py-1.5 rounded-[9px] text-white transition-colors duration-200"

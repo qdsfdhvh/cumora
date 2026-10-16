@@ -7,6 +7,7 @@ import { RUNNABLE_ENGINES, engineLabel, type RunnableEngineId } from '@/lib/engi
 import { useAuth } from '@/stores/auth'
 import { usePairingCodes } from '@/stores/pairing-codes'
 import { copyText } from '@/lib/clipboard'
+import { AutoPairAction } from '@/components/AutoPairAction'
 
 /**
  * First-run gate for free-tier users: their agents run on their own machine
@@ -150,6 +151,7 @@ export function Onboarding() {
                   </span>
                 </label>
                 <pre className="bg-ink-900 text-cloud rounded-[10px] p-3 text-[12px] overflow-x-auto whitespace-pre-wrap break-all font-mono select-all">{cmd}</pre>
+                <AutoPairAction engine={engine} installService={asService} />
                 <div className="flex items-center gap-3 mt-3">
                   <button type="button" onClick={() => { void copyCommand() }}
                     className="inline-flex items-center justify-center min-w-[120px] text-[12px] font-semibold px-3 py-1.5 rounded-[9px] text-white transition-colors duration-200"
