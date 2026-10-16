@@ -47,6 +47,45 @@ const ENV_FILE_KEYS = [
   'OPENAI_COMPACTION_MODEL',
 ]
 
+const BACKUP_DIR_NAME = 'backups'
+const BACKUP_PREFIX = 'cumora-'
+const BACKUP_DEFAULT_KEEP = 7
+
+/**
+ * Is an automatic backup due? Pure so the cadence can be tested without waiting
+ * a day: `auto` is off/daily/weekly and `lastAt` is the last successful run.
+ */
+function isBackupDue(state, nowMs) {
+  const auto = state?.auto
+  if (auto !== 'daily' && auto !== 'weekly') return false
+  const last = state?.lastAt ? Date.parse(state.lastAt) : Number.NaN
+  if (!Number.isFinite(last)) return true
+  const periodMs = auto === 'daily' ? 86_400_000 : 7 * 86_400_000
+  return nowMs - last >= periodMs
+}
+
+/**
+ * Which backup files to delete to keep `keep` newest. Pure; names carry an
+ * ISO-derived stamp so a plain string sort is chronological. Only files this
+ * feature wrote are considered — anything else in the folder is left alone.
+ * A missing/garbage `keep` falls back to the default (never "delete all"), and
+ * an absurd number is clamped to 1..60.
+ */
+function backupsToDelete(names, keep) {
+  const wanted = Math.max(1, Math.min(60, Number(keep) || BACKUP_DEFAULT_KEEP))
+  // Strictly the files this feature writes (cumora-<stamp>.zip). A loose
+  // startsWith/endsWith would also match a user's own "cumora-cloud-8.0-backup.zip"
+  // sitting in the folder and quietly delete it.
+  const pattern = new RegExp(`^${BACKUP_PREFIX}\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}\\.zip$`)
+  const mine = names.filter((n) => typeof n === 'string' && pattern.test(n)).sort()
+  return mine.slice(0, Math.max(0, mine.length - wanted))
+}
+
+/** Filesystem-safe, sortable stamp: 2026-10-16T10-53-12. */
+function backupStamp(d = new Date()) {
+  return d.toISOString().slice(0, 19).replace(/:/g, '-')
+}
+
 function localDir() {
   return path.join(app.getPath('userData'), 'local')
 }
@@ -92,6 +131,32 @@ function writeEnvFile(values) {
     '',
   ].join('\n')
   fs.writeFileSync(envFilePath(), body, { mode: 0o600 })
+}
+
+function backupStatePath() {
+  return path.join(localDir(), 'backup-state.json')
+}
+
+function readBackupState() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(backupStatePath(), 'utf8'))
+    return {
+      auto: parsed?.auto === 'daily' || parsed?.auto === 'weekly' ? parsed.auto : 'off',
+      keep: Number.isFinite(parsed?.keep) ? parsed.keep : BACKUP_DEFAULT_KEEP,
+      lastAt: typeof parsed?.lastAt === 'string' ? parsed.lastAt : null,
+      lastPath: typeof parsed?.lastPath === 'string' ? parsed.lastPath : null,
+      lastBytes: Number.isFinite(parsed?.lastBytes) ? parsed.lastBytes : 0,
+      lastError: typeof parsed?.lastError === 'string' ? parsed.lastError : null,
+    }
+  } catch {
+    return { auto: 'off', keep: BACKUP_DEFAULT_KEEP, lastAt: null, lastPath: null, lastBytes: 0, lastError: null }
+  }
+}
+
+function writeBackupState(next) {
+  const dir = localDir()
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(backupStatePath(), JSON.stringify(next, null, 2))
 }
 
 function ensureRuntimeSecret() {
@@ -152,6 +217,8 @@ class LocalServer {
       durability: envFile.CUMORA_DURABILITY === 'fast' ? 'fast' : 'safe',
       port: SERVER_PORT,
       hasApiKey: Boolean(envFile.OPENAI_API_KEY),
+      /** Automatic backups: cadence, retention and the last successful run. */
+      backups: readBackupState(),
       /** Which model service the server's own LLM calls use. Empty strings
        *  mean the built-in OpenAI defaults. */
       llm: {
@@ -255,6 +322,60 @@ class LocalServer {
       if (wasRunning || app.isPackaged) await this.start()
       this.emit()
     }
+  }
+
+  /**
+   * Backups the app writes itself, into <data>/backups. Off by default: this
+   * writes files on a schedule, so it only ever happens because the owner asked
+   * for it. Rotation keeps the newest N and nothing else in the folder is
+   * touched.
+   */
+  async runLocalBackup() {
+    const dir = path.join(localDir(), BACKUP_DIR_NAME)
+    fs.mkdirSync(dir, { recursive: true })
+    const dest = path.join(dir, `${BACKUP_PREFIX}${backupStamp()}.zip`)
+    const result = await this.backupTo(dest)
+    const prev = readBackupState()
+    if (!result.ok) {
+      const failed = { ...prev, lastError: result.error ?? 'unknown error' }
+      writeBackupState(failed)
+      this.emit()
+      return result
+    }
+    let deleted = []
+    try {
+      deleted = backupsToDelete(fs.readdirSync(dir), prev.keep)
+      for (const name of deleted) fs.unlinkSync(path.join(dir, name))
+    } catch { /* rotation is best-effort */ }
+    writeBackupState({
+      ...prev,
+      lastAt: new Date().toISOString(),
+      lastPath: dest,
+      lastBytes: result.bytes ?? 0,
+      lastError: null,
+    })
+    this.pushLog(`[backup] auto ${dest} (${Math.round((result.bytes ?? 0) / 1024 / 1024)} MB)${deleted.length ? ` · rotated out ${deleted.length}` : ''}`)
+    this.emit()
+    return result
+  }
+
+  /** Change the cadence/retention. Enabling it (or asking while due) runs one. */
+  async setBackupConfig({ auto, keep }) {
+    const prev = readBackupState()
+    const cadence = auto === 'daily' || auto === 'weekly' || auto === 'off' ? auto : prev.auto
+    const retention = Math.max(1, Math.min(60, Number(keep) || prev.keep))
+    writeBackupState({ ...prev, auto: cadence, keep: retention })
+    this.emit()
+    if (isBackupDue(readBackupState(), Date.now())) await this.runLocalBackup()
+    return this.status()
+  }
+
+  /** Called after launch: a due daily/weekly backup runs once, in the
+   *  background, a few minutes in (it briefly stops the server to copy a
+   *  consistent database). */
+  async runAutoBackupIfDue() {
+    if (!isBackupDue(readBackupState(), Date.now())) return null
+    return await this.runLocalBackup()
   }
 
   /** Start (or adopt) the local server. Resolves once it is healthy. */
@@ -438,4 +559,4 @@ class LocalServer {
 
 const localServer = new LocalServer()
 
-module.exports = { localServer, SERVER_PORT }
+module.exports = { localServer, SERVER_PORT, isBackupDue, backupsToDelete }

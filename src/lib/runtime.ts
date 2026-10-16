@@ -94,6 +94,8 @@ interface CumoraBridge {
     setDurability: (mode: 'safe' | 'fast') => Promise<LocalServerStatus>
     /** Point the server's own LLM calls at another OpenAI-compatible endpoint. */
     setLlmConfig: (config: LocalLlmConfig) => Promise<LocalServerStatus | LocalServerError>
+    /** Automatic backup cadence + retention (off by default). */
+    setBackupConfig: (config: LocalBackupConfig) => Promise<LocalServerStatus>
     /** Ask where to save, then archive the data directory. */
     backup: () => Promise<{ cancelled?: boolean; ok?: boolean; path?: string; bytes?: number; error?: string }>
     /** Run the daemon CLI against the local server with a freshly minted code
@@ -129,6 +131,15 @@ export interface LocalServerError {
   error: string
 }
 
+export type LocalBackupCadence = 'off' | 'daily' | 'weekly'
+
+/** Automatic backups are off unless the owner turns them on: they write files
+ *  on a schedule, which is not something to enable on someone's behalf. */
+export interface LocalBackupConfig {
+  auto: LocalBackupCadence
+  keep: number
+}
+
 export interface LocalServerStatus {
   state: 'stopped' | 'starting' | 'ready' | 'error'
   detail: string
@@ -139,6 +150,15 @@ export interface LocalServerStatus {
   backingUp?: boolean
   /** Write durability: 'safe' (default) or 'fast'. */
   durability?: 'safe' | 'fast'
+  /** Automatic backups written by the app into <data>/backups. */
+  backups?: {
+    auto: LocalBackupCadence
+    keep: number
+    lastAt: string | null
+    lastPath: string | null
+    lastBytes: number
+    lastError: string | null
+  }
   /** Model service the server's own LLM calls use (empty ⇒ OpenAI defaults). */
   llm?: {
     baseUrl: string

@@ -10,6 +10,7 @@ import { usePairingCodes } from '@/stores/pairing-codes'
 import { copyText } from '@/lib/clipboard'
 import { Avatar } from '@/components/Avatar'
 import { ModelServicePanel } from '@/components/ModelServicePanel'
+import { Select } from '@/components/Select'
 import { Checkbox } from '@/components/Checkbox'
 import { AutoPairAction } from '@/components/AutoPairAction'
 import { AppearancePicker, ChatLayoutPicker } from '@/components/AppearancePicker'
@@ -498,6 +499,8 @@ function AboutSection() {
           </div>
         </div>
 
+        <AutoBackupControls status={status} onStatus={setStatus} />
+
         <div className="flex flex-col gap-2">
           <div className="text-[12px] font-display text-ink-700">{t('me.openaiKeyLabel')}</div>
           <div className={`text-[11.5px] ${status.hasApiKey ? 'text-ink-400' : 'text-coral-500'}`}>
@@ -563,6 +566,73 @@ function AboutSection() {
   )
 }
 
+
+/** Automatic backups: cadence, retention, and when the last one landed.
+ *
+ *  Off by default. A backup briefly stops the embedded database so the copy is
+ *  consistent, which is not something to start doing on someone's schedule
+ *  without asking. */
+function AutoBackupControls({ status, onStatus }: {
+  status: LocalServerStatus
+  onStatus: (next: LocalServerStatus) => void
+}) {
+  const t = useT()
+  const [busy, setBusy] = useState(false)
+  const b = status.backups
+  const cadence = b?.auto ?? 'off'
+  const keep = b?.keep ?? 7
+  const last = b?.lastAt ? new Date(b.lastAt) : null
+  const mb = (b?.lastBytes ?? 0) / 1024 / 1024
+
+  async function save(next: { auto?: typeof cadence; keep?: number }) {
+    const bridge = window.cumora?.localServer
+    if (!bridge?.setBackupConfig) return
+    setBusy(true)
+    try {
+      onStatus(await bridge.setBackupConfig({ auto: next.auto ?? cadence, keep: next.keep ?? keep }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-[12px] font-display text-ink-700">{t('me.backupAutoLabel')}</div>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {(['off', 'daily', 'weekly'] as const).map((c) => (
+          <button
+            key={c}
+            type="button"
+            disabled={busy}
+            onClick={() => void save({ auto: c })}
+            className={`rounded-[8px] px-2.5 py-1 text-[11.5px] font-semibold transition-colors disabled:opacity-40 ${
+              cadence === c ? 'bg-skype text-white' : 'border border-ink-200 text-ink-600 hover:bg-cloud'
+            }`}
+          >
+            {c === 'off' ? t('me.backupOff') : c === 'daily' ? t('me.backupDaily') : t('me.backupWeekly')}
+          </button>
+        ))}
+        <span className="ml-2 text-[11.5px] text-ink-500">{t('me.backupKeepLabel')}</span>
+        <Select<string>
+          value={String(keep)}
+          onValueChange={(v) => void save({ keep: Number(v) })}
+          options={[
+            { value: '3', label: t('me.backupKeepN', { n: '3' }) },
+            { value: '7', label: t('me.backupKeepN', { n: '7' }) },
+            { value: '14', label: t('me.backupKeepN', { n: '14' }) },
+          ]}
+          className="w-[86px]"
+        />
+      </div>
+      <div className="text-[11px] text-ink-400 leading-snug break-all">
+        {last
+          ? t('me.backupLast', { when: last.toLocaleString(), size: mb >= 1 ? `${mb.toFixed(1)} MB` : '<1 MB', dir: `${status.dataDir}/backups` })
+          : t('me.backupNever')}
+        {b?.lastError ? ` · ${t('me.backupLastError', { error: b.lastError })}` : ''}
+      </div>
+    </div>
+  )
+}
 
 function TrustTab() {
   const t = useT()

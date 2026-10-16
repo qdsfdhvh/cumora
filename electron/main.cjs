@@ -1192,6 +1192,15 @@ ipcMain.handle('local-server:set-durability', async (_event, mode) => {
 // Model service (Me → 本地服务 → 模型服务): point the server at another
 // OpenAI-compatible endpoint. Errors are reported as state, not thrown at the
 // renderer, so the panel can show the message next to the fields.
+ipcMain.handle('local-server:set-backup-config', async (_event, config) => {
+  try {
+    return await localServer.setBackupConfig(config ?? {})
+  } catch {
+    // Invalid input is reported by returning the unchanged status.
+    return await localServer.status()
+  }
+})
+
 ipcMain.handle('local-server:set-llm-config', async (_event, config) => {
   try {
     return await localServer.setLlmConfig(config ?? {})
@@ -1307,6 +1316,14 @@ app.whenReady().then(() => {
   // renderer about it. In dev the server is an external `npm run server:dev`
   // process — localServer then just health-probes it.
   localServer.start()
+  // A due daily/weekly backup runs once per launch, a few minutes in — copying
+  // the database means stopping the server for a couple of seconds, which is
+  // less disruptive once the app has settled than during boot.
+  setTimeout(() => {
+    void localServer.runAutoBackupIfDue().catch((e) => {
+      console.warn('[backup] auto backup failed:', e instanceof Error ? e.message : e)
+    })
+  }, 3 * 60_000)
 })
 
 // =============== Dev-only notification shortcuts ===============

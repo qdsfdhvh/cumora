@@ -182,6 +182,13 @@ There is no cloud to fall back on, so the app backs itself up:
 - **Me → 本地服务 → 备份数据…** asks where to save, stops the embedded server
   (which closes the database cleanly), writes a zip, and starts it again — a few
   seconds, the window stays open.
+- **Automatic backups** (Me → 本地服务 → 自动备份): **off by default**. Set a
+  cadence (daily / weekly) and how many to keep (3 / 7 / 14) and the app writes
+  `cumora-<timestamp>.zip` into `<data>/backups`, rotating the oldest out. A
+  launch whose schedule is due runs one a few minutes in, in the background.
+  Enabling it takes one immediately, so "does it work" is answered at once
+  rather than tomorrow. The folder holds only files this feature wrote —
+  anything else you drop there is left alone.
 - **CLI**, with the app closed:
 
 ```bash
