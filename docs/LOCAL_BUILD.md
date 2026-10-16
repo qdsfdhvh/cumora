@@ -296,6 +296,38 @@ Each stays overridable: `REALTIME_OUTBOX_INTERVAL_MS`, `DB_GC_INTERVAL_MS`,
 `WORKSPACE_CLEANUP_INTERVAL_MS`, `EMAIL_RETRY_INTERVAL_MS`,
 `LLM_ROLLUP_INTERVAL_MS`.
 
+## Running on a different model service (DeepSeek, Moonshot, local models)
+
+The server-side LLM calls — the classifiers that triage your inbox, the agenda
+classifier, conversation summaries, convene speech — go to whatever endpoint
+this is pointed at. By default that is OpenAI. To move them somewhere else, set:
+
+```bash
+CUMORA_LLM_BASE_URL=https://api.deepseek.com/v1   # any OpenAI-compatible endpoint
+CUMORA_LLM_API_KEY=sk-…                            # falls back to OPENAI_API_KEY
+OPENAI_MODEL=deepseek-chat                         # main model
+OPENAI_MODEL_SUPPORT=deepseek-chat                 # cheap/classifier model
+OPENAI_COMPACTION_MODEL=deepseek-chat              # summaries
+```
+
+The app writes these for you in **Me → 本地服务 → 模型服务** (presets plus a
+free-form base URL), and **测试连接** does one tiny round-trip so you see the
+provider's own error instead of a silent agent.
+
+Two things are worth knowing before you switch:
+
+- **Model names are passed through untouched.** `OPENAI_MODEL` has to name a
+  model the endpoint actually serves; nothing is renamed for you, because a
+  silently renamed model is harder to debug than a clear 404. The endpoint must
+  support **tool calling and streaming** — that is what agent turns need.
+- **Image generation is not part of this API.** Agent avatars have to be
+  uploaded (the app says so instead of failing obscurely). Embeddings are
+  likewise unnecessary: the embedded database has no `pgvector`, so memory
+  search runs without them, and `embedText` already fails soft.
+
+Local endpoints work the same way — `CUMORA_LLM_BASE_URL=http://127.0.0.1:8080/v1`
+for llama.cpp, Ollama or vLLM.
+
 ## Write durability
 
 The embedded database commits with Postgres' default `synchronous_commit = on`

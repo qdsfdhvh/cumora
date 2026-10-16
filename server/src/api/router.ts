@@ -24,6 +24,7 @@ import { enqueueWorkspaceCleanup, nudgeWorkspaceCleanupWorker } from '../workspa
 import { collectDocumentStorageKeys, evictDocumentRoom } from '../documents/rooms.js'
 import { createPoll, castVote, closePoll, PollError } from '../polls.js'
 import { env } from '../env.js'
+import { getLlmClient, llmEndpointLabel } from '../llm.js'
 import { publicBodyParserError } from '../body-parser-errors.js'
 import { startConvene } from '../agents/convene.js'
 import { ensureDirectConversation } from '../agents/private_chat.js'
@@ -697,6 +698,43 @@ api.get('/auth/providers', safe(async (_req, res) => {
       ? { workspaceName: account.workspaceName, logoUrl: account.workspaceLogoUrl }
       : null,
   })
+}))
+
+/**
+ * One tiny round-trip against whatever model service this deployment is
+ * pointed at. The app's 模型服务 panel uses it so the owner gets the provider's
+ * own error message — a wrong model id, a bad key, an endpoint that does not
+ * speak Chat Completions — instead of a silent agent that never starts.
+ */
+api.post('/local/llm-probe', safe(async (req, res) => {
+  requireAuth(req)
+  const model = typeof req.body?.model === 'string' && req.body.model.trim() ? req.body.model.trim() : env.OPENAI_MODEL_SUPPORT
+  const started = Date.now()
+  const endpoint = llmEndpointLabel()
+  try {
+    const client = await getLlmClient(null)
+    const r = (await client.responses.create({
+      model,
+      input: 'reply with the single word: pong',
+      max_output_tokens: 16,
+    })) as unknown as { output_text?: string | null }
+    res.json({
+      ok: true,
+      endpoint,
+      model,
+      ms: Date.now() - started,
+      text: (r.output_text ?? '').trim().slice(0, 200),
+    })
+  } catch (e) {
+    // 200 with ok:false — this reports a diagnostic, not a failed request.
+    res.json({
+      ok: false,
+      endpoint,
+      model,
+      ms: Date.now() - started,
+      error: e instanceof Error ? e.message : String(e),
+    })
+  }
 }))
 
 api.post('/auth/local', safe(async (req, res) => {

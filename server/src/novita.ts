@@ -251,9 +251,22 @@ function toResponseUsage(raw: unknown): Record<string, unknown> | null {
  *  silent default. `reasoning.effort` has no Chat Completions equivalent
  *  either (Novita's reasoning knobs — `separate_reasoning`, `enable_thinking`
  *  — are model-specific and orthogonal); we drop it rather than guess. */
-function buildChatBody(args: ResponsesCreateArgs, stream: boolean): Record<string, unknown> {
+/**
+ * What a Responses→Chat-Completions bridge needs from the endpoint it talks to:
+ * the client to call, and how to spell our model names there. Everything else
+ * — message, tool and usage translation, streaming events — is identical for
+ * every OpenAI-compatible endpoint, which is why this is a parameter and not
+ * four copies of the same file.
+ */
+export interface ChatBridge {
+  client: () => OpenAI
+  /** Map the model this call site asked for onto the endpoint's own name. */
+  mapModel: (model: string) => string
+}
+
+function buildChatBody(bridge: ChatBridge, args: ResponsesCreateArgs, stream: boolean): Record<string, unknown> {
   const body: Record<string, unknown> = {
-    model: stripNovitaPrefix(args.model),
+    model: bridge.mapModel(args.model),
     messages: toChatMessages(args.instructions, args.input),
     stream,
   }
@@ -270,9 +283,9 @@ function buildChatBody(args: ResponsesCreateArgs, stream: boolean): Record<strin
  *  `getTrackedLlmClient`'s wrapper) — so translating just that + `.usage`
  *  covers convene.ts / agenda.ts / inbox-triage.ts / router.ts / etc. in
  *  full. */
-async function createNonStreaming(args: ResponsesCreateArgs, opts?: RequestOpts): Promise<Record<string, unknown>> {
-  const body = buildChatBody(args, false)
-  const completion = await novitaClient().chat.completions.create(
+async function createNonStreaming(bridge: ChatBridge, args: ResponsesCreateArgs, opts?: RequestOpts): Promise<Record<string, unknown>> {
+  const body = buildChatBody(bridge, args, false)
+  const completion = await bridge.client().chat.completions.create(
     body as unknown as Parameters<OpenAI['chat']['completions']['create']>[0] & { stream?: false },
     toRequestOptions(args, opts),
   )
@@ -310,11 +323,12 @@ async function createNonStreaming(args: ResponsesCreateArgs, opts?: RequestOpts)
  *  reading turn-stream.ts's reducer), so it's the full translation surface
  *  needed, not a partial shim. */
 async function* createStreaming(
+  bridge: ChatBridge,
   args: ResponsesCreateArgs,
   opts?: RequestOpts,
 ): AsyncGenerator<ResponseStreamEvent> {
-  const body = buildChatBody(args, true)
-  const stream = await novitaClient().chat.completions.create(
+  const body = buildChatBody(bridge, args, true)
+  const stream = await bridge.client().chat.completions.create(
     body as unknown as Parameters<OpenAI['chat']['completions']['create']>[0] & { stream: true },
     toRequestOptions(args, opts),
   )
@@ -439,11 +453,16 @@ function wrapAsyncIterable(gen: AsyncGenerator<ResponseStreamEvent>): AsyncItera
  *  client: `client.responses.create(...)`. Assigning this object as
  *  `client.responses` (see `withProviderRouting` in llm.ts) is sufficient —
  *  nothing in this codebase touches any other `client.responses.*` method. */
-export const novitaResponsesShim = {
-  create(args: ResponsesCreateArgs, opts?: RequestOpts): unknown {
-    if (args.stream) {
-      return Promise.resolve(wrapAsyncIterable(createStreaming(args, opts)))
-    }
-    return createNonStreaming(args, opts)
-  },
+export function makeResponsesShim(bridge: ChatBridge): { create(args: ResponsesCreateArgs, opts?: RequestOpts): unknown } {
+  return {
+    create(args: ResponsesCreateArgs, opts?: RequestOpts): unknown {
+      if (args.stream) {
+        return Promise.resolve(wrapAsyncIterable(createStreaming(bridge, args, opts)))
+      }
+      return createNonStreaming(bridge, args, opts)
+    },
+  }
 }
+
+/** Novita: strip the `novita/` routing prefix, then let the rest through. */
+export const novitaResponsesShim = makeResponsesShim({ client: novitaClient, mapModel: stripNovitaPrefix })
