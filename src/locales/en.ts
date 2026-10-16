@@ -12,6 +12,7 @@
  */
 export const en = {
   // ─── shared ───────────────────────────────────────────────────────
+  'app.starting': 'Starting…',
   'common.close': 'close',
   'common.use': 'Use',
   'common.tryAgain': 'Try again',

@@ -54,6 +54,13 @@ interface AuthState {
 
 const TOKEN_KEY = 'cumora.auth.token'
 const COMPANY_KEY = 'cumora.auth.company'
+/** Last known identity, so the app can paint its shell on the first frame
+ *  instead of waiting for /auth/me (the packaged app's server is still booting
+ *  at that point). Refreshed by setMe; dropped by clear(). */
+const USER_KEY = 'cumora.auth.user'
+/** Same idea for the workspace list: the first frame already knows which
+ *  workspace this is instead of flashing "no workspace" until /auth/me lands. */
+const COMPANIES_KEY = 'cumora.auth.companies'
 
 /** Set when the owner signs out on purpose, so the sign-in screen's automatic
  *  local sign-in does not bounce them straight back in. Cleared by setSession. */
@@ -69,10 +76,35 @@ function resetWorkspaceStores(): void {
   ])
 }
 
+function readStoredUser(): AuthUser | null {
+  try {
+    const raw = localStorage.getItem(USER_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<AuthUser>
+    if (!parsed || typeof parsed.id !== 'string' || !parsed.id) return null
+    return {
+      id: parsed.id,
+      email: typeof parsed.email === 'string' ? parsed.email : '',
+      name: typeof parsed.name === 'string' ? parsed.name : '',
+      providers: Array.isArray(parsed.providers) ? parsed.providers : undefined,
+    }
+  } catch { return null }
+}
+
+function readStoredCompanies(): AuthCompany[] {
+  try {
+    const raw = localStorage.getItem(COMPANIES_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((c): c is AuthCompany => Boolean(c) && typeof (c as AuthCompany).id === 'string')
+  } catch { return [] }
+}
+
 export const useAuth = create<AuthState>((set) => ({
   token: localStorage.getItem(TOKEN_KEY),
-  user: null,
-  companies: [],
+  user: readStoredUser(),
+  companies: readStoredCompanies(),
   activeCompanyId: localStorage.getItem(COMPANY_KEY),
   contextEpoch: 0,
   ready: false,
@@ -89,6 +121,10 @@ export const useAuth = create<AuthState>((set) => ({
     void import('@/api/client').then(({ ws }) => ws.reconnect())
   },
   setMe(user, companies, activeCompanyId) {
+    try {
+      localStorage.setItem(USER_KEY, JSON.stringify(user))
+      localStorage.setItem(COMPANIES_KEY, JSON.stringify(companies))
+    } catch { /* quota — cosmetic */ }
     // Honour a previously-chosen company if it's still in the user's set.
     // Without this, every /auth/me probe would yank the active company back
     // to the server-default one, defeating the manual switcher.
@@ -174,6 +210,8 @@ export const useAuth = create<AuthState>((set) => ({
     return true
   },
   clear() {
+    localStorage.removeItem(COMPANIES_KEY)
+    localStorage.removeItem(USER_KEY)
     usePairingCodes.getState().clear()
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(COMPANY_KEY)
