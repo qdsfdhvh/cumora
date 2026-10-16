@@ -13,9 +13,10 @@ import { isProviderProfileId } from '../agents/computer/provider-profiles.js'
 import { InvalidModelIdError, parseModelId } from '../agents/computer/model-id.js'
 import type { PoolClient } from 'pg'
 import {
-  storage, UPLOAD_DIR, freshenAttachmentUrl, normalizeStorageKey,
+  storage, UPLOAD_DIR, freshenAttachmentUrl, freshenAvatarUrl, normalizeStorageKey,
   storageKeyFromPublicUrl, messageAttachmentStorageKey,
 } from '../storage.js'
+import { isStoredAvatarReference } from '../storage-keys.js'
 import { healthPool, pool } from '../db/pool.js'
 import { CH_MESSAGE_NEW, CH_REACTIONS, CH_CONVO_UPDATED, CH_DOCS, CH_TYPING, CH_CALENDAR_EVENTS, CH_BOARDS, CH_STATUS, CH_WORKSPACES, publish } from '../redis.js'
 import { enqueueBroadcast, nudgeRealtimeOutbox, withOutboxTransaction } from '../realtime-outbox.js'
@@ -1029,7 +1030,12 @@ api.patch('/me', safe(async (req, res) => {
     `SELECT id, email, display_name, avatar_url FROM users WHERE id = $1`, [me],
   )
   const row = rows[0]
-  res.json({ user: { id: row.id, email: row.email, name: row.display_name, avatarUrl: row.avatar_url } })
+  res.json({
+    user: {
+      id: row.id, email: row.email, name: row.display_name,
+      avatarUrl: await freshenAvatarUrl(row.avatar_url),
+    },
+  })
 }));
 
 /** Replace the local user's avatar. Same base64 body as POST /uploads, but the
@@ -2496,15 +2502,18 @@ api.get('/participants', async (req, res) => {
   // itself stays lazy on the write path; this is just surfacing the
   // address that WILL be used.
   const { computeAgentAddress } = await import('../email.js')
-  const finalRows = rows.map((r) => {
+  const finalRows = await Promise.all(rows.map(async (r) => {
+    // An avatar row may hold a storage key or a read URL; the renderer only
+    // understands URLs.
+    const avatarUrl = await freshenAvatarUrl(r.avatarUrl)
     if (r.email || r.kind !== 'agent' || !r.companySlug) {
       const { companySlug: _drop, ...rest } = r
-      return rest
+      return { ...rest, avatarUrl }
     }
     const computed = computeAgentAddress(r.id, r.companySlug)
     const { companySlug: _drop, ...rest } = r
-    return { ...rest, email: computed }
-  })
+    return { ...rest, email: computed, avatarUrl }
+  }))
   res.json(finalRows)
 })
 
@@ -3091,7 +3100,21 @@ api.put('/agents/:id', async (req, res) => {
   if (data.bio !== undefined)          push('bio', data.bio)
   if (data.initial !== undefined)      push('initial', data.initial)
   if (data.avatarBg !== undefined)     push('avatar_bg', data.avatarBg)
-  if (data.avatarUrl !== undefined)    push('avatar_url', data.avatarUrl)   // null clears it
+  if (data.avatarUrl !== undefined) {
+    // null clears the portrait; anything else must be a stored avatar
+    // reference. Without this a typo (`/api/uploads/…`) or a foreign host
+    // lands in a column the renderer puts straight into <img src>.
+    if (data.avatarUrl === null || data.avatarUrl === '') {
+      push('avatar_url', null)
+    } else {
+      const raw = String(data.avatarUrl)
+      if (!isStoredAvatarReference(raw, env.R2_PUBLIC_BASE, env.UPLOADS_BASE)) {
+        throw new HttpError(400, 'avatarUrl must reference a stored avatar')
+      }
+      // Store a read URL, not the bare key, so every consumer can use it as-is.
+      push('avatar_url', await freshenAvatarUrl(raw))
+    }
+  }
   if (data.model !== undefined)        push('model', data.model)             // null clears it (use default)
   if (data.fastModel !== undefined)    push('fast_model', data.fastModel)    // small-brain model; null clears
   if (data.nativeFastMode !== undefined) push('native_fast_mode', data.nativeFastMode)

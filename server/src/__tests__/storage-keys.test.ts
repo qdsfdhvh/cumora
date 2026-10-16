@@ -9,6 +9,8 @@ import {
   messageAttachmentStorageKey,
   normalizeStorageKey,
   storageKeyFromPublicUrl,
+  isStoredAvatarReference,
+  avatarStorageKey,
 } from '../storage-keys.js'
 
 const PUBLIC_BASE = 'https://cdn.cumora.test/private-files'
@@ -109,4 +111,43 @@ test('absolute local uploads URLs map back to keys when an uploads base is set',
     storageKeyFromPublicUrl(`${base}/uploads/attachments/photo.jpg`, ''),
     null,
   )
+})
+
+// Avatar columns are rendered straight into <img src>, so the API refuses
+// anything that is not a stored avatar reference. This is what stops a typo
+// (`/api/uploads/…`, a wrong port, a foreign host) from blanking a portrait.
+test('isStoredAvatarReference accepts the shapes the app produces', () => {
+  const base = 'http://127.0.0.1:5181'
+  for (const value of [
+    'avatars/iris-d4de.jpg',
+    '/uploads/avatars/iris-d4de.jpg',
+    `${base}/uploads/avatars/iris-d4de.jpg`,
+  ]) {
+    assert.equal(isStoredAvatarReference(value, '', base), true, value)
+  }
+  // Uploads base unset (dev / same-origin): the relative form still works.
+  assert.equal(isStoredAvatarReference('/uploads/avatars/x.png', ''), true)
+})
+
+test('isStoredAvatarReference rejects typos, foreign hosts and other prefixes', () => {
+  const base = 'http://127.0.0.1:5181'
+  for (const value of [
+    'http://127.0.0.1:5181/api/uploads/avatars/iris-d4de.jpg', // the /api typo
+    'https://evil.example/avatars/iris-d4de.jpg',
+    '/uploads/attachments/photo.jpg',
+    'avatars/', // key with no object
+    'just some text',
+    '',
+  ]) {
+    assert.equal(isStoredAvatarReference(value, '', base), false, value)
+  }
+})
+
+test('avatarStorageKey resolves both stored shapes and nothing else', () => {
+  const base = 'http://127.0.0.1:5181'
+  assert.equal(avatarStorageKey('avatars/iris-d4de.jpg', '', base), 'avatars/iris-d4de.jpg')
+  assert.equal(avatarStorageKey(`${base}/uploads/avatars/iris-d4de.jpg`, '', base), 'avatars/iris-d4de.jpg')
+  assert.equal(avatarStorageKey('/uploads/avatars/x.png', ''), 'avatars/x.png')
+  assert.equal(avatarStorageKey('attachments/report.pdf', '', base), null)
+  assert.equal(avatarStorageKey('https://cdn.example/avatars/x.jpg', '', base), null)
 })

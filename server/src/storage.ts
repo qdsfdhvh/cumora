@@ -33,6 +33,7 @@ import {
   normalizeStorageKey,
   storageKeyFromPublicUrl as storageKeyFromPublicUrlForBase,
   messageAttachmentStorageKey as messageAttachmentStorageKeyForBase,
+  avatarStorageKey,
 } from './storage-keys.js'
 
 export { normalizeStorageKey }
@@ -54,6 +55,19 @@ export function storageKeyFromPublicUrl(raw: string): string | null {
 
 export function messageAttachmentStorageKey(input: { key?: unknown; url?: unknown }): string | null {
   return messageAttachmentStorageKeyForBase(input, env.R2_PUBLIC_BASE)
+}
+
+/**
+ * Resolve an avatar value (storage key or read URL) into a URL the renderer can
+ * put in `<img src>`. Rows written by a script, an older build, or a direct API
+ * call may hold the bare key; without this they render as a broken image.
+ * Values that are neither (a foreign URL, a legacy CDN link) are passed through.
+ */
+export async function freshenAvatarUrl(value: string | null | undefined): Promise<string | null> {
+  if (!value) return value ?? null
+  const key = avatarStorageKey(value, env.R2_PUBLIC_BASE, env.UPLOADS_BASE)
+  if (!key) return value
+  return storage.publicUrl(key)
 }
 
 export function signedUrlExpiresSoon(raw: string, leewaySeconds = 300): boolean {

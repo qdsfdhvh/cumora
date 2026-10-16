@@ -67,6 +67,44 @@ export function storageKeyFromPublicUrl(raw: string, r2PublicBase: string, uploa
   }
 }
 
+/**
+ * The `avatars/…` key a value refers to, when it refers to one.
+ *
+ * Avatar columns accept both shapes the app produces — the key itself and a
+ * read URL — so every consumer needs the same key resolution before it can
+ * decide how to serve the value.
+ */
+export function avatarStorageKey(raw: string, r2PublicBase: string, uploadsBase = ''): string | null {
+  const value = raw.trim()
+  if (!value) return null
+  const direct = normalizeStorageKey(value)
+  if (direct?.startsWith('avatars/')) return direct
+  const mapped = storageKeyFromPublicUrl(value, r2PublicBase, uploadsBase)
+  return mapped?.startsWith('avatars/') ? mapped : null
+}
+
+/**
+ * Is this value a reference to a stored avatar (rather than arbitrary text)?
+ *
+ * Avatar columns are rendered straight into <img src>, so a typo or a foreign
+ * host should never reach them. Accepts the three shapes the app produces:
+ * an `avatars/…` key, a `/uploads/avatars/…` path, or an absolute URL that maps
+ * back to one of the configured storage bases.
+ */
+export function isStoredAvatarReference(raw: string, r2PublicBase: string, uploadsBase = ''): boolean {
+  const value = raw.trim()
+  if (!value) return false
+  if (avatarStorageKey(value, r2PublicBase, uploadsBase)) return true
+  if (value.startsWith('/uploads/avatars/')) return normalizeStorageKey(value.slice('/uploads/'.length)) !== null
+  // An absolute /uploads/avatars/… URL we cannot map to a key is still a
+  // storage reference (e.g. the port changed since it was written).
+  try {
+    return new URL(value).pathname.startsWith('/uploads/avatars/')
+  } catch {
+    return false
+  }
+}
+
 /** Select the authoritative object key for a chat message attachment.
  *
  * A valid explicit key wins even when its accompanying URL is a presigned S3
