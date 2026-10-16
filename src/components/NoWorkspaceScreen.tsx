@@ -7,7 +7,6 @@ import { WindowDragStrip } from './WindowDragStrip'
 export function NoWorkspaceScreen() {
   const t = useT()
   const setMe = useAuth((s) => s.setMe)
-  const setServerCapabilities = useAuth((s) => s.setServerCapabilities)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -20,7 +19,6 @@ export function NoWorkspaceScreen() {
       await api.createCompany(trimmed)
       const session = await api.authMe()
       setMe(session.user, session.companies, session.activeCompanyId)
-      setServerCapabilities(session.serverCapabilities)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {

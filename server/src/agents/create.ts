@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 import { pool } from '../db/pool.js'
 import {
-  cloudComputerId,
   type ComputerKind,
   type EngineId,
   resolveComputerAssignment,
@@ -21,8 +20,6 @@ export class AgentCreationError extends Error {
 
 export interface CreateAgentRecordInput {
   companyId: string
-  tier: 'free' | 'pro' | 'max'
-  maxActiveAgents: number
   requestId?: string | null
   name: string
   role?: string
@@ -163,28 +160,9 @@ export async function createAgentRecord(
       }
     }
 
-    const { rows: countRows } = await client.query<{ count: number }>(
-      `SELECT COUNT(*)::int AS count
-         FROM participants
-        WHERE company_id = $1 AND kind = 'agent' AND departed_at IS NULL`,
-      [input.companyId],
-    )
-    if ((countRows[0]?.count ?? 0) >= input.maxActiveAgents) {
-      throw new AgentCreationError(
-        403,
-        `${input.tier} tier workspaces can have at most ${input.maxActiveAgents} active agents`,
-      )
-    }
-
     let placement: CreateAgentRecordResult['placement'] = null
     const computerId = input.computerId?.trim() || null
     if (computerId) {
-      if (computerId === cloudComputerId(input.companyId) && input.tier === 'free') {
-        throw new AgentCreationError(
-          403,
-          'Free tier agents run on your own computer. Upgrade to Pro to use Cumora Cloud.',
-        )
-      }
       placement = await resolveComputerAssignment({
         companyId: input.companyId,
         computerId,

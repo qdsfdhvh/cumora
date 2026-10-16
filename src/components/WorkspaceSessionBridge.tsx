@@ -10,7 +10,6 @@ import { useParticipants } from '@/stores/participants'
 export function WorkspaceSessionBridge() {
   const meId = useAuth((s) => s.user?.id ?? null)
   const setMe = useAuth((s) => s.setMe)
-  const setServerCapabilities = useAuth((s) => s.setServerCapabilities)
   const refreshing = useRef(false)
   const refreshQueued = useRef(false)
 
@@ -32,7 +31,6 @@ export function WorkspaceSessionBridge() {
             // updated auth state while this request was in flight.
             const before = useAuth.getState()
             setMe(session.user, session.companies, session.activeCompanyId)
-            setServerCapabilities(session.serverCapabilities)
             const after = useAuth.getState()
             const beforeIds = before.companies.map((company) => company.id).sort().join('\n')
             const afterIds = after.companies.map((company) => company.id).sort().join('\n')
@@ -61,7 +59,7 @@ export function WorkspaceSessionBridge() {
         ])
       }
     })
-  }, [meId, setMe, setServerCapabilities])
+  }, [meId, setMe])
 
   return null
 }

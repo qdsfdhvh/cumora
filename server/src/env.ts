@@ -273,16 +273,6 @@ export const env = {
    */
   CORS_ORIGINS: (process.env.CUMORA_CORS_ORIGINS ?? '')
     .split(',').map((s) => s.trim()).filter(Boolean),
-  /** Fallback base for invitation-link construction (see INVITE_BASE_URL).
-   *  Kept from the cloud build; the packaged app overrides it. */
-  AUTH_DONE_URL: process.env.CUMORA_AUTH_DONE_URL ?? 'http://localhost:5173/',
-  /** Base URL used to build the public face of company invitation links
-   *  (`<base>/invite/<token>`). When unset we fall back to AUTH_DONE_URL —
-   *  already prod-correct for the OAuth flow (https://app.cumora.ai on the
-   *  web, cumora://auth in packaged Electron which gets rewritten to
-   *  cumora://invite/<token>). Set this only if the invite-acceptance flow
-   *  lives on a different origin than the OAuth redirect. */
-  INVITE_BASE_URL: process.env.CUMORA_INVITE_BASE_URL ?? '',
   /**
    * Real-email feature. When all three core vars are set, agents can send
    * mail (Resend) and receive mail (Cloudflare Email Worker → /webhooks/

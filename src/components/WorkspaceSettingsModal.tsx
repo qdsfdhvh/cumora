@@ -7,11 +7,10 @@ import { usePairingCodes } from '@/stores/pairing-codes'
 interface Props {
   company: AuthCompany
   companyCount: number
-  onInvite: () => void
   onClose: () => void
 }
 
-export function WorkspaceSettingsModal({ company, companyCount, onInvite, onClose }: Props) {
+export function WorkspaceSettingsModal({ company, companyCount, onClose }: Props) {
   const t = useT()
   const meId = useAuth((s) => s.user?.id)
   const removeCompany = useAuth((s) => s.removeCompany)
@@ -178,9 +177,6 @@ export function WorkspaceSettingsModal({ company, companyCount, onInvite, onClos
               <h3 className="text-[13px] font-semibold text-ink-800">{t('workspace.membersTitle')}</h3>
               <p className="text-[11.5px] text-ink-400 mt-0.5">{t('workspace.membersHelp')}</p>
             </div>
-            <button type="button" onClick={onInvite} className="px-3 py-1.5 rounded-[8px] text-[12px] font-semibold text-white bg-skype hover:opacity-90">
-              {t('workspace.inviteBtn')}
-            </button>
           </div>
 
           {error && <div className="mb-3 rounded-[8px] bg-coral-soft/40 px-3 py-2 text-[11.5px] text-coral-deep">{error}</div>}
