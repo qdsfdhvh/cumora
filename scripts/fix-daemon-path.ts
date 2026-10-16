@@ -17,6 +17,7 @@
  * afterwards (or install the service from a plain terminal).
  */
 import { spawnSync } from 'node:child_process'
+import { reloadDaemonService } from './lib/reload-daemon.js'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -68,14 +69,7 @@ if (dropped.length === 0) {
 }
 
 if (reload) {
-  const uid = process.getuid?.() ?? 0
-  for (const args of [['bootout', `gui/${uid}/${LABEL}`], ['bootstrap', `gui/${uid}`, PLIST]]) {
-    const r = spawnSync('launchctl', args, { encoding: 'utf8' })
-    if (r.status !== 0 && !/No such process/.test(r.stderr ?? '')) {
-      console.warn(`launchctl ${args[0]} failed: ${(r.stderr || r.stdout).trim()}`)
-    }
-  }
-  console.log('service reloaded (agents pick the new PATH up on their next turn)')
+  if (reloadDaemonService()) console.log('agents pick the new PATH up on their next turn')
 } else {
   console.log('reload to apply: launchctl bootout gui/$(id -u)/' + LABEL + ' && launchctl bootstrap gui/$(id -u) ' + PLIST)
 }

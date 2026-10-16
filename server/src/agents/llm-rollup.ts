@@ -27,7 +27,12 @@ import { pool } from '../db/pool.js'
 
 /** Interval between rollup refresh ticks. Default 120s; set 0 to disable. Read
  *  straight from process.env (not env.ts) to keep this self-contained. */
-const INTERVAL_MS = Number(process.env.LLM_ROLLUP_INTERVAL_MS ?? 120_000)
+// Two minutes keeps a shared deployment's rollup current for the admin
+// observability page. The packaged app is the only reader of its own rollup,
+// so it refreshes far less often (LLM_ROLLUP_INTERVAL_MS overrides).
+const INTERVAL_MS = Number(
+  process.env.LLM_ROLLUP_INTERVAL_MS ?? (process.env.CUMORA_DATA_DIR ? 15 * 60_000 : 120_000),
+)
 
 // Distinct from migrate's SCHEMA_LOCK_KEY (7_643_178_926_104n).
 const ROLLUP_LOCK_KEY = 7_643_178_926_211n

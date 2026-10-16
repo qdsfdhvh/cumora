@@ -16,6 +16,14 @@ function required(name: string, fallback?: string): string {
   return v
 }
 
+/**
+ * Embedded (packaged desktop app) mode: one machine, one user, no cloud. The
+ * idle background work below runs on much slower cadences there — nothing needs
+ * the multi-replica safety nets a shared deployment does, and every tick wakes
+ * the in-process database on a laptop. Everything stays overridable by env.
+ */
+const EMBEDDED = Boolean(process.env.CUMORA_DATA_DIR)
+
 const DEFAULT_MODEL = process.env.OPENAI_MODEL ?? 'gpt-5.5'
 // Cerebellum default — small/fast model used by JSON classifiers and one-shot
 // utilities that don't drive the agent's perceived intelligence (gender infer,
@@ -302,7 +310,7 @@ export const env = {
   /** Interval between outbound retry-loop ticks. Defaults to 60s; set to
    *  0 to disable retry entirely (failed sends stay failed forever). The
    *  loop uses SKIP LOCKED so multiple replicas can run it concurrently. */
-  EMAIL_RETRY_INTERVAL_MS: Number(process.env.EMAIL_RETRY_INTERVAL_MS ?? 60_000),
+  EMAIL_RETRY_INTERVAL_MS: Number(process.env.EMAIL_RETRY_INTERVAL_MS ?? (EMBEDDED ? 15 * 60_000 : 60_000)),
   /** Interval between email-attachment GC sweeps. Defaults to 24h. The
    *  sweep enumerates the storage prefix, compares against DB-referenced
    *  keys, and deletes orphans older than the safety threshold. Setting
@@ -313,7 +321,7 @@ export const env = {
    *  deletes up to 10 batches of DB_GC_BATCH rows per table, so the
    *  default 5min cadence burns a large backlog gradually without
    *  starving vacuum. 0 disables the worker entirely. */
-  DB_GC_INTERVAL_MS: Number(process.env.DB_GC_INTERVAL_MS ?? 5 * 60_000),
+  DB_GC_INTERVAL_MS: Number(process.env.DB_GC_INTERVAL_MS ?? (EMBEDDED ? 30 * 60_000 : 5 * 60_000)),
   /** Rows per delete batch. Small batches = short locks. */
   DB_GC_BATCH: Number(process.env.DB_GC_BATCH ?? 10_000),
   /** Per-table retention windows in days; 0 disables that table's sweep.
@@ -327,7 +335,14 @@ export const env = {
   DB_GC_WS_TICKETS_DAYS: Number(process.env.DB_GC_WS_TICKETS_DAYS ?? 1),
   /** Durable external-resource cleanup after workspace deletion. Set the
    * interval to 0 to leave jobs queued for a separately invoked worker. */
-  WORKSPACE_CLEANUP_INTERVAL_MS: Number(process.env.WORKSPACE_CLEANUP_INTERVAL_MS ?? 60_000),
+  WORKSPACE_CLEANUP_INTERVAL_MS: Number(process.env.WORKSPACE_CLEANUP_INTERVAL_MS ?? (EMBEDDED ? 15 * 60_000 : 60_000)),
+  /**
+   * Realtime-outbox fallback poll. Delivery is nudge-driven — every commit that
+   * enqueues a broadcast also wakes the worker — so this interval only has to
+   * catch a missed nudge. A shared deployment keeps a 1s poll so replicas see
+   * each other's rows promptly; a single local instance needs nothing near that.
+   */
+  REALTIME_OUTBOX_INTERVAL_MS: Number(process.env.REALTIME_OUTBOX_INTERVAL_MS ?? (EMBEDDED ? 15_000 : 1_000)),
   /** Interval between poll-expiration sweeps. Defaults to 60s. The sweep
    *  flips polls past their expiresAt to closed and broadcasts the close
    *  event. Set to 0 to disable (polls then stay open forever even after

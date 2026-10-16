@@ -3,6 +3,7 @@ import type { PoolClient, QueryResult, QueryResultRow } from 'pg'
 import { pool } from './db/pool.js'
 import { stripLoneSurrogates } from './agents/text-safety.js'
 import { publish, type BroadcastEvent } from './redis.js'
+import { env } from './env.js'
 
 /**
  * Transactional realtime outbox.
@@ -36,7 +37,9 @@ export interface OutboxDrainResult {
   discarded: number
 }
 
-const WORKER_INTERVAL_MS = 1_000
+// Fallback poll only — deliverRealtimeNudge() wakes the worker on every
+// enqueue, so this bounds how long a *missed* nudge can sit in the outbox.
+const WORKER_INTERVAL_MS = env.REALTIME_OUTBOX_INTERVAL_MS
 const CLAIM_LEASE_MS = 15_000
 const BATCH_SIZE = 32
 const MAX_ATTEMPTS = 12
