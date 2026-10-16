@@ -506,6 +506,25 @@ export interface ApiTriageEconomics {
   recent: ApiTriageLedgerRow[]
 }
 
+/** One ledger row, trimmed to what a status line needs. */
+export interface ApiLlmCallSummary {
+  purpose: string
+  source: string
+  model: string
+  status: string
+  error: string | null
+  createdAt: string
+}
+
+/** Whether the server's model service is working, read off the call ledger:
+ *  `failing` is "the newest call failed and nothing has succeeded since". */
+export interface ApiLocalLlmHealth {
+  endpoint: string
+  failing: boolean
+  latest: ApiLlmCallSummary | null
+  latestOk: ApiLlmCallSummary | null
+}
+
 export interface ApiAgentEvent {
   id: string
   runId: string
@@ -761,6 +780,8 @@ export const api = {
       '/local/llm-probe',
       { method: 'POST', body: JSON.stringify({ model: model ?? null }) },
     ),
+  /** The server's own model-service status, straight from the call ledger. */
+  localLlmHealth: () => http<ApiLocalLlmHealth>('/local/llm-health'),
   /** Replace YOUR avatar with an uploaded image (`POST /me/avatar`). */
   uploadAvatar: (file: File) => postImage('/me/avatar', file),
   /** Replace an AGENT's portrait with an uploaded image. */
