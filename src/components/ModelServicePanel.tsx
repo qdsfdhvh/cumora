@@ -19,7 +19,7 @@ import { useT } from '@/lib/i18n'
 import { refreshLlmHealth, useLlmHealth } from '@/lib/llmHealth'
 import type { LocalServerStatus } from '@/lib/runtime'
 
-type Preset = 'openai' | 'deepseek' | 'custom'
+type Preset = 'openai' | 'deepseek' | 'magpie' | 'custom'
 
 /** Absolute local time — no relative-time keys needed, and no ambiguity about
  *  which timezone a "3 minutes ago" was computed in. */
@@ -32,11 +32,18 @@ const PRESETS: Record<Exclude<Preset, 'custom'>, { baseUrl: string; model: strin
   // Empty strings mean "leave it alone": the server's built-in defaults.
   openai: { baseUrl: '', model: '', support: '' },
   deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', support: 'deepseek-chat' },
+  // A local gateway (Magpie and friends) that speaks Responses natively and
+  // routes by its own model ids. No key: it is on loopback.
+  magpie: { baseUrl: 'http://127.0.0.1:3425/v1', model: 'group/daily-coding', support: 'group/cheap-and-feat' },
 }
+
+/** Presets that talk Responses natively rather than Chat Completions. */
+const NATIVE_PRESETS: Preset[] = ['magpie']
 
 function detectPreset(baseUrl: string): Preset {
   if (!baseUrl) return 'openai'
   if (baseUrl === PRESETS.deepseek.baseUrl) return 'deepseek'
+  if (baseUrl === PRESETS.magpie.baseUrl) return 'magpie'
   return 'custom'
 }
 
@@ -58,6 +65,7 @@ export function ModelServicePanel({
   const [imageBaseUrl, setImageBaseUrl] = useState('')
   const [imageModel, setImageModel] = useState('')
   const [imageApiKey, setImageApiKey] = useState('')
+  const [native, setNative] = useState(false)
   const [busy, setBusy] = useState(false)
   const [testing, setTesting] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -73,6 +81,7 @@ export function ModelServicePanel({
     setSupport(llm.modelSupport)
     setImageBaseUrl(llm.imageBaseUrl ?? '')
     setImageModel(llm.imageModel ?? '')
+    setNative(llm.responsesNative === true)
     setPreset(detectPreset(llm.baseUrl))
   }, [llm])
 
@@ -80,6 +89,7 @@ export function ModelServicePanel({
     setPreset(next)
     setMsg(null)
     setTestMsg(null)
+    setNative(NATIVE_PRESETS.includes(next))
     if (next === 'custom') return
     const p = PRESETS[next]
     setBaseUrl(p.baseUrl)
@@ -101,6 +111,7 @@ export function ModelServicePanel({
         imageBaseUrl,
         imageModel,
         imageApiKey,
+        responsesNative: native,
       })
       if ('error' in next) {
         setMsg(t('me.llmSaveFailed', { error: next.error }))
@@ -145,6 +156,7 @@ export function ModelServicePanel({
     || imageBaseUrl !== (llm?.imageBaseUrl ?? '')
     || imageModel !== (llm?.imageModel ?? '')
     || imageApiKey.trim().length > 0
+    || native !== (llm?.responsesNative === true)
 
   const field = 'h-9 px-2 rounded-[8px] border border-ink-100 bg-paper text-ink-900 placeholder:text-ink-300 text-[12.5px] focus:outline-none focus:border-sky2-300'
 
@@ -154,9 +166,11 @@ export function ModelServicePanel({
       <div className="text-[11.5px] text-ink-400 leading-snug">{t('me.llmHint')}</div>
 
       <div className="flex items-center gap-1.5 flex-wrap">
-        {(['openai', 'deepseek', 'custom'] as Preset[]).map((p) => {
+        {(['openai', 'deepseek', 'magpie', 'custom'] as Preset[]).map((p) => {
           const active = preset === p
-          const label = p === 'openai' ? t('me.llmPresetOpenai') : p === 'deepseek' ? 'DeepSeek' : t('me.llmPresetCustom')
+          const label = p === 'openai'
+            ? t('me.llmPresetOpenai')
+            : p === 'deepseek' ? 'DeepSeek' : p === 'magpie' ? t('me.llmPresetMagpie') : t('me.llmPresetCustom')
           return (
             <button
               key={p}
@@ -215,6 +229,16 @@ export function ModelServicePanel({
             />
           </label>
         </div>
+      )}
+
+      {preset !== 'openai' && (
+        <label className="flex items-start gap-2 text-[11.5px] text-ink-600">
+          <input type="checkbox" checked={native} onChange={(e) => setNative(e.target.checked)} className="mt-0.5" />
+          <span>
+            {t('me.llmNativeLabel')}
+            <span className="block text-[11px] text-ink-400 leading-snug">{t('me.llmNativeHint')}</span>
+          </span>
+        </label>
       )}
 
       {/* Images can live on their own endpoint: a DeepSeek key cannot draw, and

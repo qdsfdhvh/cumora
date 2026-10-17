@@ -343,6 +343,27 @@ Two things are worth knowing before you switch:
 Local endpoints work the same way — `CUMORA_LLM_BASE_URL=http://127.0.0.1:8080/v1`
 for llama.cpp, Ollama or vLLM.
 
+### Local gateways such as Magpie
+
+A gateway that routes by its own model ids and serves the Responses API natively
+(Magpie: `~/.config/magpie`, loopback only) should **not** go through the
+Chat-Completions translation — it would work, but it would throw away the native
+streamed events the turn loop consumes. Pick the **本地网关（Magpie）** preset, or
+set:
+
+```bash
+CUMORA_LLM_BASE_URL=http://127.0.0.1:3425/v1
+CUMORA_LLM_RESPONSES_NATIVE=1          # the panel's checkbox
+OPENAI_MODEL=group/daily-coding        # a group the gateway routes
+OPENAI_MODEL_SUPPORT=group/cheap-and-feat
+CUMORA_IMAGE_BASE_URL=http://127.0.0.1:3425/v1   # gateways usually proxy images too
+OPENAI_IMAGE_MODEL=codex/gpt-image-2.5
+```
+
+No API key is needed for a loopback gateway; anything non-empty satisfies the
+SDK. The boot log then says `(native Responses)` instead of
+`(OpenAI-compatible, translated)`.
+
 ## Write durability
 
 The embedded database commits with Postgres' default `synchronous_commit = on`

@@ -66,6 +66,14 @@ export const env = {
    *  provider swap doesn't require retyping the key in two fields. */
   LLM_API_KEY: process.env.CUMORA_LLM_API_KEY ?? '',
   /**
+   * The endpoint speaks the Responses API natively (local gateways such as
+   * Magpie do, and route by their own model ids like `group/daily-coding`).
+   * Without this we would run its answers through the Chat-Completions bridge
+   * for no reason — which works, but loses the native streamed events the
+   * turn loop is written against.
+   */
+  LLM_RESPONSES_NATIVE: process.env.CUMORA_LLM_RESPONSES_NATIVE === '1',
+  /**
    * "Brain" model — the agent's main reasoning loop and convene speech.
    * Default model used when an agent's `participants.model` is NULL.
    * Per-agent overrides live on the agent row in DB and are edited from

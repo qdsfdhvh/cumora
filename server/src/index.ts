@@ -240,7 +240,7 @@ async function main() {
     // "why is it not answering" is much easier to answer with this in the log.
     console.log(
       env.LLM_BASE_URL
-        ? `[llm] endpoint ${env.LLM_BASE_URL} (OpenAI-compatible) · models ${env.OPENAI_MODEL} / ${env.OPENAI_MODEL_SUPPORT}`
+        ? `[llm] endpoint ${env.LLM_BASE_URL} (${env.LLM_RESPONSES_NATIVE ? 'native Responses' : 'OpenAI-compatible, translated'}) · models ${env.OPENAI_MODEL} / ${env.OPENAI_MODEL_SUPPORT}`
         : `[llm] endpoint api.openai.com · models ${env.OPENAI_MODEL} / ${env.OPENAI_MODEL_SUPPORT}`,
     )
   })
