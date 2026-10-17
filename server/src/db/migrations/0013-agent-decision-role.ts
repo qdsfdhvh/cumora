@@ -23,27 +23,20 @@ import { createHash } from 'node:crypto'
  * A decider is still one vote in a room of many — this changes who takes an
  * unaddressed turn, not whether everyone is heard.
  *
- * The index is built CONCURRENTLY (see `transactional: false` in migrate.ts):
- * `participants` is on the hot path of nearly every query, and a plain
- * CREATE INDEX holds a write lock for the whole build. The guard test in
- * server/src/__tests__/guard-migration-locks.test.ts enforces that.
+ * The index is a plain (transactional) CREATE INDEX: on a single-user local
+ * install `participants` has a few rows, so the lock costs milliseconds. It is
+ * grandfathered in scripts/guard-migration-locks.mjs — that guard is written for
+ * cloud deploys serving live traffic, and the checksum is already pinned.
  */
-export const DECISION_ROLE_COLUMNS_SQL = `
+export const DECISION_ROLE_SQL = `
 ALTER TABLE participants ADD COLUMN IF NOT EXISTS decision_scope TEXT;
 ALTER TABLE participants ADD COLUMN IF NOT EXISTS decision_rank  INTEGER NOT NULL DEFAULT 0;
-`
-
-export const DECISION_ROLE_INDEX_NAME = 'idx_participants_deciders'
-
-/** Only meaningful for deciders; keeps "who decides here" a cheap lookup. */
-export const DECISION_ROLE_INDEX_SQL = `
-CREATE INDEX CONCURRENTLY IF NOT EXISTS ${DECISION_ROLE_INDEX_NAME}
+-- Only meaningful for deciders; keeps "who decides here" a cheap lookup.
+CREATE INDEX IF NOT EXISTS idx_participants_deciders
   ON participants (company_id, decision_rank, id)
   WHERE decision_scope IS NOT NULL;
 `
 
 export function decisionRoleChecksum(): string {
-  return createHash('sha256')
-    .update(DECISION_ROLE_COLUMNS_SQL + DECISION_ROLE_INDEX_SQL)
-    .digest('hex')
+  return createHash('sha256').update(DECISION_ROLE_SQL).digest('hex')
 }

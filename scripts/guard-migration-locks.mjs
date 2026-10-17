@@ -61,6 +61,13 @@ const MIGRATIONS_DIR = 'server/src/db/migrations'
  */
 const GRANDFATHERED = new Map([
   [
+    '0013-agent-decision-role.ts',
+    'A plain CREATE INDEX on participants would lock writes for the whole build on a ' +
+    'deployment serving live traffic. This build is a single-user local app where that ' +
+    'table has a few rows, the migration is already checksum-pinned once applied, and ' +
+    'rewriting it to CONCURRENTLY would fail the checksum check on existing databases.',
+  ],
+  [
     '0004-agent-runtime-assignment.ts',
     'ADD COLUMN … DEFAULT gen_random_uuid()::text rewrites participants under ' +
     'AccessExclusiveLock. Applied and checksum-pinned; changing the SQL would fail ' +

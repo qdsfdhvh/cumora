@@ -80,7 +80,7 @@ export const SCHEMA_MIGRATIONS = [
   {
     version: 13,
     name: '0013_agent_decision_role',
-    checksum: '35e90119cb4a0a1459cad03d4e2b675e02f44d0d6fce19cca3e4f9460e52991d',
+    checksum: '63518f8126764983ffd9f715442fa2d6f735e9f622236f19bb75a9f66381a052',
   },
 ] as const satisfies readonly MigrationMetadata[]
 
