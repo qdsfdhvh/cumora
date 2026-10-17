@@ -53,10 +53,15 @@ export interface RoutingClaim {
  *  be electable even if membership still lists them. */
 export async function loadElectionCandidates(agentIds: readonly string[]): Promise<ElectionCandidate[]> {
   if (agentIds.length === 0) return []
+  // `decision_scope` / `decision_rank` decide who goes first for an
+  // unaddressed turn (routing-election.ts); a room without deciders behaves
+  // exactly as before.
   const { rows } = await pool.query<{
     id: string; role: string | null; status: string | null; statusUpdatedAt: Date | null
+    decisionScope: string | null; decisionRank: number | null
   }>(
-    `SELECT id, role, status, status_updated_at AS "statusUpdatedAt"
+    `SELECT id, role, status, status_updated_at AS "statusUpdatedAt",
+            decision_scope AS "decisionScope", decision_rank AS "decisionRank"
        FROM participants
       WHERE id = ANY($1::text[])
         AND kind = 'agent'

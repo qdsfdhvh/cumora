@@ -863,7 +863,7 @@ async function wake(payload: MessageNewEvent): Promise<void> {
         companyId: conversation.company_id,
         body: messageBody,
         conversationKind: conversation?.kind ?? 'group',
-        candidates: roster.map((c) => ({ id: c.id, role: c.role })),
+        candidates: roster.map((c) => ({ id: c.id, role: c.role, decisionScope: c.decisionScope ?? null })),
       })
       if (route.mode === 'one-of-us') {
         const election = electLineup(route.primary, roster, { leaseMs: BUSY_STATUS_LEASE_MS })

@@ -1947,6 +1947,7 @@ api.get('/participants', async (req, res) => {
     departedAt: string | null
     computerId: string | null; engine: string | null; fastModel: string | null; providerProfile: string | null; nativeFastMode: boolean
     engineInherit: boolean | null
+    decisionScope: string | null; decisionRank: number | null
   }>(
     `SELECT p.id, p.kind, p.name, p.role, p.initial,
             p.avatar_bg AS "avatarBg", p.avatar_url AS "avatarUrl",
@@ -1954,6 +1955,7 @@ api.get('/participants', async (req, res) => {
             p.bio, p.tools, p.system_prompt AS "systemPrompt", p.model,
             p.computer_id AS "computerId", p.engine, p.fast_model AS "fastModel", p.provider_profile AS "providerProfile", p.native_fast_mode AS "nativeFastMode",
             p.engine_inherit AS "engineInherit",
+            p.decision_scope AS "decisionScope", p.decision_rank AS "decisionRank",
             -- Email resolution differs by kind:
             --  - agents carry their own minted address on participants.email
             --  - humans don't have one there; surface their real auth email
@@ -2393,6 +2395,7 @@ interface AgentBody {
   initial?: unknown; avatarBg?: unknown; avatarUrl?: unknown
   model?: unknown; fastModel?: unknown; nativeFastMode?: unknown
   tools?: unknown
+  decisionScope?: unknown; decisionRank?: unknown
 }
 function readAgentBody(b: AgentBody): {
   id?: string; name?: string; role?: string
@@ -2406,6 +2409,10 @@ function readAgentBody(b: AgentBody): {
   fastModel?: string | null
   nativeFastMode?: boolean
   tools?: string[] | null
+  /** What this agent may call, in their own words. null/'' = not a decider. */
+  decisionScope?: string | null
+  /** Seniority among deciders; lower wins (0 = lead). */
+  decisionRank?: number
 } {
   const out: Record<string, unknown> = {}
   if (b.nativeFastMode !== undefined) {
@@ -2431,6 +2438,20 @@ function readAgentBody(b: AgentBody): {
     throw error
   }
   if (Array.isArray(b.tools))             out.tools = b.tools.map((x) => String(x))
+  // Decision authority. An empty scope is how you stop being a decider, so ''
+  // is normalised to null rather than stored as a blank string the election
+  // would then have to special-case.
+  if (b.decisionScope === null)           out.decisionScope = null
+  else if (typeof b.decisionScope === 'string') {
+    const trimmed = b.decisionScope.trim()
+    out.decisionScope = trimmed.length > 0 ? trimmed.slice(0, 400) : null
+  }
+  if (b.decisionRank !== undefined) {
+    if (typeof b.decisionRank !== 'number' || !Number.isInteger(b.decisionRank) || b.decisionRank < 0 || b.decisionRank > 99) {
+      throw new HttpError(400, 'decisionRank must be an integer 0..99')
+    }
+    out.decisionRank = b.decisionRank
+  }
   return out as ReturnType<typeof readAgentBody>
 }
 
@@ -2607,6 +2628,8 @@ api.put('/agents/:id', async (req, res) => {
   if (data.fastModel !== undefined)    push('fast_model', data.fastModel)    // small-brain model; null clears
   if (data.nativeFastMode !== undefined) push('native_fast_mode', data.nativeFastMode)
   if (data.tools !== undefined)        push('tools', JSON.stringify(data.tools))
+  if (data.decisionScope !== undefined) push('decision_scope', data.decisionScope)
+  if (data.decisionRank !== undefined)  push('decision_rank', data.decisionRank)
   if (sets.length === 0) { res.status(400).json({ error: 'nothing to update' }); return }
   params.push(id, tenant)
   await pool.query(

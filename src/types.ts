@@ -104,6 +104,11 @@ export interface Participant {
   providerProfile?: string | null
   fastModel?: string | null
   nativeFastMode?: boolean
+  /** What this agent may call, in their own words. Empty/undefined = not a
+   *  decider; an unaddressed group message goes to a decider first. */
+  decisionScope?: string | null
+  /** Seniority among deciders (0 = lead, 10 = senior, 20 = peer). */
+  decisionRank?: number
   /** id of the Computer this agent runs on (null/undefined = Cumora Cloud) */
   computerId?: string | null
   /** engine the agent's host runs it on ('managed' for cloud agents) */

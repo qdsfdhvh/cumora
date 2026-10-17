@@ -149,8 +149,9 @@ export interface UnaddressedRoute {
 export function buildUnaddressedRouteRequest(args: {
   body: string
   conversationKind: string
-  /** Wake candidates with their roster role, for the fit signal. */
-  candidates: ReadonlyArray<{ id: string; role: string | null }>
+  /** Wake candidates with their roster role, for the fit signal. A decider
+   *  also carries `decisionScope` so the router knows who is accountable. */
+  candidates: ReadonlyArray<{ id: string; role: string | null; decisionScope?: string | null }>
 }): RouteRequest {
   // A broadcast is for everyone, by definition.
   if (ALL_MENTION_RE.test(args.body)) return { mode: 'each' }
@@ -165,12 +166,18 @@ export function buildUnaddressedRouteRequest(args: {
       'You route ONE message in a team chat where some teammates are AI agents.',
       'The message does not name anyone. Decide whether the whole room should engage, or whether ONE agent should take it.',
       'Answer "one-of-us" when the message is a task, an assignment, or a question with a concrete answer one person can own — and set "primary" to the candidate id whose role fits best.',
+      'An agent listed as deciding something has authority over that area: when the message falls inside it, prefer them over a merely adjacent role, unless they are clearly the wrong fit.',
       'Answer "each" when the room is expected to engage together — discussion, opinions, votes, roll calls, small talk, or anything where several independent replies are wanted.',
       'When unsure, answer "each". Waking an extra agent costs tokens; waking no one loses the message.',
       'Respond ONLY with a single JSON object: {"responseMode": "each"|"one-of-us", "primary": "<candidate id or null>"}.',
     ].join('\n'),
     input: [
-      `Agents in the room: ${args.candidates.map((c) => (c.role ? `${c.id} (${c.role})` : c.id)).join(', ')}`,
+      `Agents in the room: ${args.candidates
+        .map((c) => {
+          const who = c.role ? `${c.id} (${c.role})` : c.id
+          return c.decisionScope?.trim() ? `${who} — decides: ${c.decisionScope.trim()}` : who
+        })
+        .join(', ')}`,
       '',
       'Message:',
       args.body.slice(0, 2000),
@@ -195,7 +202,7 @@ export async function routeUnaddressedMessage(args: {
   companyId: string | null
   body: string
   conversationKind: string
-  candidates: ReadonlyArray<{ id: string; role: string | null }>
+  candidates: ReadonlyArray<{ id: string; role: string | null; decisionScope?: string | null }>
 }): Promise<UnaddressedRoute> {
   const req = buildUnaddressedRouteRequest(args)
   if (req.mode) return { mode: req.mode as 'each' | 'one-of-us', primary: null }

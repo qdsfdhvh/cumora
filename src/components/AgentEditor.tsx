@@ -57,6 +57,10 @@ export function AgentEditor({ agent, onClose, onSaved }: Props) {
   const editing = agent !== null
   const [name, setName] = useState(agent?.name ?? '')
   const [role, setRole] = useState(agent?.role ?? '')
+  // Decision authority: `role` says what someone is; this says what they may
+  // call. An unaddressed turn lands on a decider first (routing-election.ts).
+  const [decisionScope, setDecisionScope] = useState(agent?.decisionScope ?? '')
+  const [decisionRank, setDecisionRank] = useState(agent?.decisionRank ?? 0)
   const [systemPrompt, setSystemPrompt] = useState(agent?.systemPrompt ?? '')
   const [bio, setBio] = useState(agent?.bio ?? '')
   const [avatarBg, setAvatarBg] = useState(agent?.avatarBg ?? PALETTE[0])
@@ -241,6 +245,8 @@ export function AgentEditor({ agent, onClose, onSaved }: Props) {
         model: model.trim() || null,
         fastModel: fastModel.trim() || null,
         nativeFastMode: showNativeFastMode && nativeFastModeSupported && nativeFastMode,
+        decisionScope: decisionScope.trim() ? decisionScope.trim() : null,
+        decisionRank,
       }
       // A host/engine change persists these pins in the assignment's single
       // SQL UPDATE. Do not clear them earlier if that assignment may fail.
@@ -392,6 +398,30 @@ export function AgentEditor({ agent, onClose, onSaved }: Props) {
               onChange={(e) => setRole(e.target.value)}
               placeholder={t('agent.rolePh')}
             />
+          </Field>
+
+          <Field label={t('agent.decisionLabel')} hint={t('agent.decisionHint')}>
+            <TextArea
+              value={decisionScope}
+              onChange={(e) => setDecisionScope(e.target.value)}
+              rows={3}
+              placeholder={t('agent.decisionPh')}
+              style={{ minHeight: 76 }}
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-[11.5px] text-ink-500">{t('agent.decisionRankLabel')}</span>
+              <Select<string>
+                value={String(decisionRank)}
+                onValueChange={(v) => setDecisionRank(Number(v))}
+                options={[
+                  { value: '0', label: t('agent.decisionRankLead') },
+                  { value: '10', label: t('agent.decisionRankSenior') },
+                  { value: '20', label: t('agent.decisionRankPeer') },
+                ]}
+                className="w-[132px]"
+              />
+            </div>
+            <div className="mt-1.5 text-[11px] text-ink-400 leading-snug">{t('agent.decisionRankHint')}</div>
           </Field>
 
           <Field label={t('agent.styleLabel')} hint={t('agent.styleHint')}>
