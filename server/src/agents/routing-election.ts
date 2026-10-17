@@ -30,6 +30,10 @@ export interface ElectionCandidate {
   status: string | null
   /** Fresh `status_updated_at` makes a busy status real; a stale one is expired. */
   statusUpdatedAt: Date | null
+  /** What this agent may call, in their own words. NULL = not a decider. */
+  decisionScope?: string | null
+  /** Tie-break among deciders; lower is more senior (0 = lead). */
+  decisionRank?: number | null
 }
 
 const BUSY_STATUSES = new Set(['thinking', 'working', 'waiting'])
@@ -40,19 +44,44 @@ export function isBusyCandidate(c: ElectionCandidate, now: number, leaseMs: numb
   return now - c.statusUpdatedAt.getTime() < leaseMs
 }
 
-/** Ordered candidate ids: available first, each class sorted by id. */
+/**
+ * Ordered candidate ids: available first, each class sorted by id.
+ *
+ * Deciders come first inside each class. That is the one authority signal the
+ * code owns (the router only proposes by role fit): if a room has someone
+ * accountable for the call, an unaddressed turn lands on them before it lands
+ * on whoever happens to sort first. Rank breaks ties between deciders so two
+ * overlapping scopes resolve by seniority rather than by id.
+ */
 export function orderCandidates(
   candidates: readonly ElectionCandidate[],
   opts: { now?: number; leaseMs?: number } = {},
 ): string[] {
   const now = opts.now ?? Date.now()
   const leaseMs = opts.leaseMs ?? Number.POSITIVE_INFINITY
-  const available: string[] = []
-  const busy: string[] = []
+  const available: ElectionCandidate[] = []
+  const busy: ElectionCandidate[] = []
   for (const c of candidates) {
-    (isBusyCandidate(c, now, leaseMs) ? busy : available).push(c.id)
+    (isBusyCandidate(c, now, leaseMs) ? busy : available).push(c)
   }
-  return [...available.sort(compareIds), ...busy.sort(compareIds)]
+  return [...available.sort(compareCandidates).map((c) => c.id), ...busy.sort(compareCandidates).map((c) => c.id)]
+}
+
+function isDecider(c: ElectionCandidate): boolean {
+  return typeof c.decisionScope === 'string' && c.decisionScope.trim().length > 0
+}
+
+/** Deciders first (by rank, then id), then everyone else by id. */
+function compareCandidates(a: ElectionCandidate, b: ElectionCandidate): number {
+  const da = isDecider(a) ? 0 : 1
+  const db = isDecider(b) ? 0 : 1
+  if (da !== db) return da - db
+  if (da === 0) {
+    const ra = a.decisionRank ?? 0
+    const rb = b.decisionRank ?? 0
+    if (ra !== rb) return ra - rb
+  }
+  return compareIds(a.id, b.id)
 }
 
 function compareIds(a: string, b: string): number {

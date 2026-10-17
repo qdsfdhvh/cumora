@@ -207,6 +207,10 @@ export interface ApiParticipant {
   providerProfile?: string | null
   fastModel?: string | null
   nativeFastMode?: boolean
+  /** What this agent may call, in their own words. null = not a decider. */
+  decisionScope?: string | null
+  /** Seniority among deciders; lower wins (0 = lead). */
+  decisionRank?: number
 }
 
 /** A Computer (agent host) as returned by GET /api/computers. */
@@ -293,6 +297,8 @@ export interface AgentInput {
   fastModel?: string | null
   /** Native provider speed setting, independent of either model choice. */
   nativeFastMode?: boolean
+  decisionScope?: string | null
+  decisionRank?: number
   tools?: string[]
 }
 
