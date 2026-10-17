@@ -54,12 +54,7 @@ import {
 } from './migrations/0010-board-card-due-on.js'
 import { AGENT_NATIVE_FAST_MODE_SQL, agentNativeFastModeChecksum } from './migrations/0011-agent-native-fast-mode.js'
 import { COMPANY_LOGO_SQL, companyLogoChecksum } from './migrations/0012-company-logo.js'
-import {
-  DECISION_ROLE_COLUMNS_SQL,
-  DECISION_ROLE_INDEX_NAME,
-  DECISION_ROLE_INDEX_SQL,
-  decisionRoleChecksum,
-} from './migrations/0013-agent-decision-role.js'
+import { DECISION_ROLE_SQL, decisionRoleChecksum } from './migrations/0013-agent-decision-role.js'
 
 /** Frozen data backfill embedded in migration 0001. Exported so its behavior
  * can be exercised against PostgreSQL without replaying the whole migration. */
@@ -2658,14 +2653,8 @@ const VERSIONED_MIGRATIONS: readonly VersionedMigration[] = [
   {
     ...SCHEMA_MIGRATIONS[12],
     sourceChecksum: decisionRoleChecksum(),
-    // CREATE INDEX CONCURRENTLY cannot run inside a transaction block, and the
-    // partial index must not take a write lock on `participants`. Both halves
-    // are idempotent; ensureConcurrentIndex repairs an interrupted build.
-    transactional: false,
-    up: async (client) => {
-      await client.query(DECISION_ROLE_COLUMNS_SQL)
-      await ensureConcurrentIndex(client, DECISION_ROLE_INDEX_NAME, DECISION_ROLE_INDEX_SQL)
-    },
+    transactional: true,
+    up: async (client) => { await client.query(DECISION_ROLE_SQL) },
   },
 ]
 
