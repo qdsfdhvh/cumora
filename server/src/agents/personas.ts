@@ -24,6 +24,10 @@ export interface Persona {
   model: string | null
   /** The tenant this persona belongs to. */
   companyId: string
+  /** What this agent may call on their own authority; null = not a decider. */
+  decisionScope: string | null
+  /** Tie-break among deciders (0 = lead). Only meaningful with a scope. */
+  decisionRank: number
 }
 
 /** id → Persona | null (null = looked up but not found / not an agent). */
@@ -39,15 +43,22 @@ export async function getPersona(id: string): Promise<Persona | null> {
   const { rows } = await pool.query<{
     id: string; name: string; role: string | null; style: string | null;
     model: string | null; company_id: string
+    decision_scope: string | null; decision_rank: number
   }>(
-    `SELECT id, name, role, system_prompt AS style, model, company_id
+    `SELECT id, name, role, system_prompt AS style, model, company_id,
+            decision_scope, decision_rank
        FROM participants
       WHERE id = $1 AND kind = 'agent' AND departed_at IS NULL`,
     [id],
   )
   const r = rows[0]
   const persona: Persona | null = r
-    ? { id: r.id, name: r.name, role: r.role ?? '', style: r.style ?? '', model: r.model ?? null, companyId: r.company_id }
+    ? {
+        id: r.id, name: r.name, role: r.role ?? '', style: r.style ?? '', model: r.model ?? null,
+        companyId: r.company_id,
+        decisionScope: r.decision_scope ?? null,
+        decisionRank: r.decision_rank ?? 0,
+      }
     : null
   personaCache.set(id, persona)
   return persona
@@ -63,8 +74,10 @@ export async function getAllAgentPersonas(companyId: string): Promise<Persona[]>
   const { rows } = await pool.query<{
     id: string; name: string; role: string | null; style: string | null;
     model: string | null; company_id: string
+    decision_scope: string | null; decision_rank: number
   }>(
-    `SELECT id, name, role, system_prompt AS style, model, company_id
+    `SELECT id, name, role, system_prompt AS style, model, company_id,
+            decision_scope, decision_rank
        FROM participants
       WHERE kind = 'agent' AND departed_at IS NULL AND company_id = $1
       ORDER BY name ASC`,
@@ -73,6 +86,8 @@ export async function getAllAgentPersonas(companyId: string): Promise<Persona[]>
   return rows.map((r) => ({
     id: r.id, name: r.name, role: r.role ?? '', style: r.style ?? '', model: r.model ?? null,
     companyId: r.company_id,
+    decisionScope: r.decision_scope ?? null,
+    decisionRank: r.decision_rank ?? 0,
   }))
 }
 
@@ -86,6 +101,7 @@ interface TeamMember {
   name: string
   role: string
   kind: 'agent' | 'human'
+  decisionScope?: string | null
 }
 
 /** Pull the live team roster from DB, scoped to one tenant. Agents and
@@ -93,7 +109,7 @@ interface TeamMember {
  *  up in another agent's prompt. */
 export async function getTeamRoster(companyId: string): Promise<TeamMember[]> {
   const { rows } = await pool.query<TeamMember>(
-    `SELECT id, name, COALESCE(role, '') AS role, kind
+    `SELECT id, name, COALESCE(role, '') AS role, kind, decision_scope AS "decisionScope"
        FROM participants
       WHERE departed_at IS NULL AND company_id = $1
       ORDER BY kind DESC, name ASC`,
@@ -291,7 +307,10 @@ function rosterSection(team: TeamMember[], selfId: string): string {
   }
   if (agents.length > 0) {
     lines.push('Agents:')
-    for (const a of agents) lines.push(`- ${a.id} — ${a.name}, ${a.role || 'agent'}`)
+    for (const a of agents) {
+      const authority = a.decisionScope?.trim() ? ` — decides: ${a.decisionScope.trim()}` : ''
+      lines.push(`- ${a.id} — ${a.name}, ${a.role || 'agent'}${authority}`)
+    }
   }
   return lines.join('\n')
 }
@@ -331,15 +350,39 @@ export async function buildSystemPrompt(personaId: string): Promise<string | nul
     soul ? `## YOUR SOUL (from your workspace's SOUL.md — your voice, values, how you think)\n\n${soul.trim()}` : null,
   ].filter(Boolean).join('\n\n')
 
+  const authoritySection = decisionAuthoritySection(persona.decisionScope, persona.decisionRank)
+
   return [
     selfDefinition || `You are ${persona.name}${persona.role ? `, ${persona.role.toLowerCase()}` : ''} on this team — a real person using Cumora alongside your teammates.`,
     '',
     styleLine,
     '',
+    ...(authoritySection ? [authoritySection, ''] : []),
     GLOBAL_RULES.trim(),
     '',
     rosterSection(team, persona.id),
   ].join('\n')
+}
+
+/**
+ * What a decider is told about their own authority.
+ *
+ * Exported separately because it is the part that decides behaviour: the
+ * election can hand an agent the turn, but if their prompt never says the call
+ * is theirs they will still poll the room for consensus and the authority is
+ * decoration. Pure, so the wording can be pinned without a database.
+ */
+export function decisionAuthoritySection(scope: string | null | undefined, rank: number | null | undefined): string | null {
+  const trimmed = scope?.trim()
+  if (!trimmed) return null
+  return [
+    'YOUR DECISION AUTHORITY:',
+    trimmed,
+    'Inside that scope you are the one who calls it: decide, say what you decided and why in one or two lines, and move on. Do not poll the room for consensus on something you already own, and do not defer to a teammate who merely has an opinion. Outside that scope you are one voice among equals — argue your case, let whoever owns it decide.',
+    (rank ?? 0) === 0
+      ? 'You are the lead: when two members disagree inside your scope, you break the tie.'
+      : '',
+  ].filter(Boolean).join('\n')
 }
 
 async function readWorkspaceFile(agentId: string, path: string): Promise<string | null> {

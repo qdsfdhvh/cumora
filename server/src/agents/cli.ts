@@ -577,8 +577,9 @@ async function cmdParticipants(parsed: ParsedArgs): Promise<CliResult> {
   if (kind) { params.push(kind); where += ` AND kind = $2` }
   const { rows } = await pool.query<{
     id: string; kind: string; name: string; role: string | null; status: string; avatar_url: string | null
+    decision_scope: string | null
   }>(
-    `SELECT id, kind, name, role, status, avatar_url FROM participants ${where} ORDER BY kind DESC, name ASC`,
+    `SELECT id, kind, name, role, status, avatar_url, decision_scope FROM participants ${where} ORDER BY kind DESC, name ASC`,
     params,
   )
   if (parsed.flags.json) return ok(JSON.stringify(rows, null, 2))
@@ -588,6 +589,9 @@ async function cmdParticipants(parsed: ParsedArgs): Promise<CliResult> {
   ]
   for (const r of rows) {
     lines.push(`${r.id.padEnd(15)} ${r.kind.padEnd(6)} ${r.status.padEnd(11)} ${r.role ?? ''}`)
+    // Who owns a call belongs in the roster: an agent deciding whom to ask
+    // should not need a second command to learn it.
+    if (r.decision_scope) lines.push(`  ↳ decides: ${r.decision_scope}`)
     // Surface the avatar URL on its own line when set, so an agent can fetch the
     // image and view it (\`cumora avatar show <id>\` is the convenience wrapper).
     if (r.avatar_url) lines.push(`  ↳ avatar: ${r.avatar_url}`)
