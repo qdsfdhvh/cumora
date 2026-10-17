@@ -170,7 +170,9 @@ function legacyClient(): OpenAI {
     maxRetries: SDK_MAX_RETRIES,
     timeout: SDK_TIMEOUT_MS,
   })
-  if (!custom) {
+  // A native-Responses endpoint needs no translation at all: hand it our calls
+  // as-is (the client already carries its base URL).
+  if (!custom || env.LLM_RESPONSES_NATIVE) {
     _legacy = real
     return _legacy
   }

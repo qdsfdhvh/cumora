@@ -127,6 +127,7 @@ export interface LocalLlmConfig {
   imageBaseUrl?: string
   imageModel?: string
   imageApiKey?: string
+  responsesNative?: boolean
 }
 
 /** `setLlmConfig` reports validation failures as data (with the status). */
@@ -174,6 +175,8 @@ export interface LocalServerStatus {
     imageBaseUrl: string
     imageApiKeyStored: boolean
     imageModel: string
+    /** Endpoint speaks Responses natively (local gateways such as Magpie). */
+    responsesNative: boolean
   }
   /** On-disk directory holding the database, uploads, and server.env. */
   dataDir: string

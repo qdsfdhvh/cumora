@@ -47,6 +47,7 @@ const ENV_FILE_KEYS = [
   'OPENAI_COMPACTION_MODEL',
   // Images may live on a different endpoint than text (a DeepSeek key cannot
   // draw). Empty ⇒ OpenAI when text is OpenAI, else AI avatars are unavailable.
+  'CUMORA_LLM_RESPONSES_NATIVE',
   'CUMORA_IMAGE_BASE_URL',
   'CUMORA_IMAGE_API_KEY',
   'OPENAI_IMAGE_MODEL',
@@ -277,6 +278,8 @@ class LocalServer {
         imageBaseUrl: envFile.CUMORA_IMAGE_BASE_URL ?? '',
         imageApiKeyStored: Boolean(envFile.CUMORA_IMAGE_API_KEY),
         imageModel: envFile.OPENAI_IMAGE_MODEL ?? '',
+        /** True when the endpoint speaks Responses natively (e.g. Magpie). */
+        responsesNative: envFile.CUMORA_LLM_RESPONSES_NATIVE === '1',
       },
       dataDir: localDir(),
       isDev: !app.isPackaged,
@@ -552,7 +555,7 @@ class LocalServer {
    * CUMORA_LLM_API_KEY when a custom provider is selected, so switching
    * providers does not overwrite the OpenAI key you may still want.
    */
-  async setLlmConfig({ baseUrl, model, modelSupport, apiKey, imageBaseUrl, imageModel, imageApiKey }) {
+  async setLlmConfig({ baseUrl, model, modelSupport, apiKey, imageBaseUrl, imageModel, imageApiKey, responsesNative }) {
     const clean = (v) => String(v ?? '').trim()
     const url = clean(baseUrl).replace(/\/+$/, '')
     if (url && !/^https?:\/\//i.test(url)) {
@@ -572,6 +575,9 @@ class LocalServer {
       // Empty clears the line, which is how AI avatars get switched off again.
       CUMORA_IMAGE_BASE_URL: imageUrl,
       OPENAI_IMAGE_MODEL: clean(imageModel),
+    }
+    if (typeof responsesNative === 'boolean') {
+      patch.CUMORA_LLM_RESPONSES_NATIVE = responsesNative ? '1' : ''
     }
     const imageKey = clean(imageApiKey)
     if (imageKey) patch.CUMORA_IMAGE_API_KEY = imageKey
